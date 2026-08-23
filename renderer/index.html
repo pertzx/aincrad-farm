@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aincrad Farm — RORAX Edition</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app">
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="brand-icon">⚔️</div>
+                <div>
+                    <h1>Aincrad Farm</h1>
+                    <span>v1.1.0 — RORAX</span>
+                </div>
+            </div>
+            <nav class="nav">
+                <button class="nav-item active" data-tab="dashboard">📊 Dashboard</button>
+                <button class="nav-item" data-tab="config">⚙️ Configurações</button>
+                <button class="nav-item" data-tab="proxies">🌐 Proxies</button>
+                <button class="nav-item" data-tab="logs">📋 Logs</button>
+            </nav>
+            <div class="status-bar">
+                <div class="status-indicator" id="global-status">⏹ Parado</div>
+                <div class="status-time" id="uptime">0h 0m 0s</div>
+            </div>
+        </aside>
+
+        <main class="main">
+            <!-- DASHBOARD -->
+            <section class="tab active" id="tab-dashboard">
+                <header class="page-header">
+                    <h2>Dashboard</h2>
+                    <div class="actions">
+                        <button class="btn btn-primary" id="btn-start">▶ Iniciar Farm</button>
+                        <button class="btn btn-danger" id="btn-stop">■ Parar</button>
+                    </div>
+                </header>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Sucessos</div>
+                        <div class="stat-value" id="stat-success">0</div>
+                        <div class="stat-sub" id="stat-rate">0% taxa</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Falhas</div>
+                        <div class="stat-value fail" id="stat-fail">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Total Rodadas</div>
+                        <div class="stat-value" id="stat-runs">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Instâncias</div>
+                        <div class="stat-value" id="stat-instances">0</div>
+                    </div>
+                </div>
+
+                <div class="instances-panel">
+                    <h3>Instâncias Ativas</h3>
+                    <div class="instances-list" id="instances-list">
+                        <div class="empty-state">Nenhuma instância rodando. Clique em "Iniciar Farm".</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- CONFIG -->
+            <section class="tab" id="tab-config">
+                <header class="page-header"><h2>Configurações</h2></header>
+                <div class="form-grid">
+                    <div class="form-group wide">
+                        <label>Links para Farmar (um por linha)</label>
+                        <textarea id="cfg-links" rows="6" placeholder="https://alpharede.com/abc&#10;https://rodaemotor.com/xyz"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Quantidade de Instâncias</label>
+                        <input type="number" id="cfg-instances" min="1" max="10" value="3">
+                    </div>
+                    <div class="form-group">
+                        <label>Modo Headless</label>
+                        <select id="cfg-headless">
+                            <option value="false">Visível (debug)</option>
+                            <option value="true">Headless (oculto)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Delay Mínimo (ms)</label>
+                        <input type="number" id="cfg-min-delay" value="5000">
+                    </div>
+                    <div class="form-group">
+                        <label>Delay Máximo (ms)</label>
+                        <input type="number" id="cfg-max-delay" value="15000">
+                    </div>
+                    <div class="form-group">
+                        <label>View Time (ms)</label>
+                        <input type="number" id="cfg-view-time" value="4000">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Usar Proxies</label>
+                        <select id="cfg-use-proxies">
+                            <option value="true">Sim</option>
+                            <option value="false">Não (IP real)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Randomizar User-Agent</label>
+                        <select id="cfg-random-ua">
+                            <option value="true">Sim</option>
+                            <option value="false">Não</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Limpar Storage</label>
+                        <select id="cfg-clear-storage">
+                            <option value="true">Sim</option>
+                            <option value="false">Não</option>
+                        </select>
+                    </div>
+
+                    <!-- TIER LIST VISUAL -->
+                    <div class="form-group wide">
+                        <label>🔗 Tier List — Links Populares</label>
+                        <div class="tier-container" id="tier-container">
+                            <!-- JS popula -->
+                        </div>
+                        <button class="btn btn-sm btn-secondary" id="btn-add-tier" type="button">+ Adicionar Link Popular</button>
+                        <small>Quanto maior o peso, mais vezes o link é escolhido. Use * para aplicar em todos.</small>
+                    </div>
+
+                    <!-- PEAK HOURS VISUAL -->
+                    <div class="form-group wide">
+                        <label>⏰ Horários de Pico</label>
+                        <div class="peak-container" id="peak-container">
+                            <!-- JS popula -->
+                        </div>
+                        <button class="btn btn-sm btn-secondary" id="btn-add-peak" type="button">+ Adicionar Horário</button>
+                        <small>Fora desses horários, o farm fica mais lento (humanizado).</small>
+                    </div>
+
+                    <div class="form-actions">
+                        <button class="btn btn-secondary" id="btn-save-cfg">💾 Salvar Config</button>
+                        <button class="btn btn-secondary" id="btn-load-cfg">🔄 Recarregar</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- PROXIES -->
+            <section class="tab" id="tab-proxies">
+                <header class="page-header">
+                    <h2>Gerenciador de Proxies</h2>
+                    <button class="btn btn-primary" id="btn-refresh-proxies">🔄 Atualizar & Testar</button>
+                </header>
+                <div class="proxy-stats" id="proxy-stats">0 proxies carregados</div>
+                <div class="proxy-list" id="proxy-list">
+                    <div class="empty-state">Clique em "Atualizar & Testar" para buscar proxies do GitHub.</div>
+                </div>
+            </section>
+
+            <!-- LOGS -->
+            <section class="tab" id="tab-logs">
+                <header class="page-header">
+                    <h2>Logs em Tempo Real</h2>
+                    <button class="btn btn-secondary" id="btn-clear-logs">🗑 Limpar</button>
+                </header>
+                <div class="logs-container" id="logs-container">
+                    <div class="log-entry info"><span class="log-time">--:--:--</span><span class="log-inst">MAIN</span><span class="log-msg">Aguardando início...</span></div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

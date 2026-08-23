@@ -1,0 +1,44 @@
+{
+  "links": [
+    "https://alpharede.com/BT5eq7hPW7B",
+    "https://alpharede.com/HcV335ypvNn",
+    "https://alpharede.com/vyqVS3feCF7",
+    "https://alpharede.com/UqEXJbZxnLs"
+  ],
+  "proxies": [
+    {
+      "protocol": "http",
+      "ip": "162.214.159.94",
+      "port": 8085,
+      "url": "http://162.214.159.94:8085",
+      "working": true,
+      "origin": "162.214.74.29",
+      "ping": 504,
+      "geo": {
+        "country": "United States",
+        "countryCode": "US",
+        "region": "Utah",
+        "city": "Provo",
+        "isp": "Unified Layer",
+        "flag": "🇺🇸"
+      },
+      "tier": 1
+    }
+  ],
+  "instances": 2,
+  "minDelay": 5000,
+  "maxDelay": 15000,
+  "viewTime": 4000,
+  "peakHours": [],
+  "tierList": [],
+  "useProxies": true,
+  "proxyTimeout": 8000,
+  "randomizeUA": true,
+  "clearStorage": true,
+  "spoofReferrer": true,
+  "headless": false,
+  "autoStart": false,
+  "maxRetries": 3,
+  "concurrency": 2,
+  "logs": []
+}

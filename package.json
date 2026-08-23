@@ -1,0 +1,36 @@
+{
+  "name": "aincrad-farm",
+  "version": "1.0.0",
+  "description": "Auto-farm local para links encurtados com bypass, proxies e humanização",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --mac --linux"
+  },
+  "author": "RORAX",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^43.4.1"
+  },
+  "dependencies": {
+    "node-fetch": "^2.7.0"
+  },
+  "build": {
+    "appId": "com.rorax.aincrad-farm",
+    "productName": "Aincrad Farm",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "farm/**/*",
+      "renderer/**/*",
+      "config/**/*",
+      "node_modules/**/*"
+    ]
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
+  }
+}
