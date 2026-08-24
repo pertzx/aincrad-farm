@@ -10,10 +10,19 @@ FAÇA O SEGUINTE 1. BUSQUE TODOS TEXTOS EM BOTOES OU ELEMENTOS QUE LEVAM A LINKS
 (function () {
     "use strict";
 
-    const originalOpen = window.open;
-    window.open = function (...args) {
-        console.log("[GS] window.open bloqueado:", args);
-        return null;
+    // Intercepta window.open para detectar quando anúncio abre nova aba
+    var __gs_lastOpenedUrl = null;
+    var __gs_lastOpenTime = 0;
+    var originalOpen = window.open;
+    window.open = function (url, target, features) {
+        if (url && typeof url === 'string') {
+            __gs_lastOpenedUrl = url;
+            __gs_lastOpenTime = Date.now();
+            console.log("[GS] window.open detectado:", url);
+            // Permite abrir (retorna originalOpen) para anúncios funcionarem
+            return originalOpen.apply(window, arguments);
+        }
+        return originalOpen.apply(window, arguments);
     };
 
     const LOGO_URL = "https://raw.githubusercontent.com/robinhossainraaj/rorax-iptv-database/refs/heads/main/logo.png";
@@ -22,6 +31,22 @@ FAÇA O SEGUINTE 1. BUSQUE TODOS TEXTOS EM BOTOES OU ELEMENTOS QUE LEVAM A LINKS
     const STYLE_ID = "gs-bypass-style";
     const STATE_KEY = "gs_bypass_state_v6";
     const CLICK_DELAY = 5000; // ms entre cliques/fases
+    const AD_DELAY = 10000;   // ms após clicar no anúncio antes de tentar o botão
+    const AD_SELECTORS = [
+        '.ad-container',
+        '[class*="ad-container"]',
+        '[class*="advertisement"]',
+        '[class*="ads"]',
+        '[id*="ad-container"]',
+        '[id*="advertisement"]',
+        '.ad',
+        '.ads',
+        '.advert',
+        '.banner-ad',
+        '[data-ad]',
+        'iframe[src*="ad"]',
+        'iframe[src*="ads"]'
+    ];
     const HOST = location.hostname.toLowerCase();
 
     const SUPPORTED_ROOTS = [
@@ -102,7 +127,7 @@ FAÇA O SEGUINTE 1. BUSQUE TODOS TEXTOS EM BOTOES OU ELEMENTOS QUE LEVAM A LINKS
     };
 
     const KEYWORDS = [
-        'CONTINUAR','AVANCAR','AVANÇAR ETAPA','PROXIMO','PRÓXIMO','PROXIMA','PRÓXIMA',
+        'CONTINUAR','AVANCAR','AVANÇAR','PROXIMO','PRÓXIMO','PROXIMA','PRÓXIMA',
         'CLIQUE NO LINK','CLIQUE PARA CONTINUAR','CONTINUE','NEXT',
         'CONTINUAR PARA O LINK','IR PARA O LINK','ABRIR LINK',
         'GET LINK','GO TO LINK','CLICK HERE',
@@ -405,7 +430,205 @@ FAÇA O SEGUINTE 1. BUSQUE TODOS TEXTOS EM BOTOES OU ELEMENTOS QUE LEVAM A LINKS
         }
     }
 
-    // ===== HIGHLIGHT VISUAL =====
+    // ===== ANÚNCIOS =====
+    function findNearestAd(targetEl) {
+        // PRIORIDADE 1: .ad-container exato → pega o IFRAME dentro
+        var containers = document.querySelectorAll('.ad-container');
+        console.log('[GS] .ad-container encontrados:', containers.length);
+
+        var candidates = [];
+        for (var c = 0; c < containers.length; c++) {
+            var ifr = containers[c].querySelector('iframe');
+            if (ifr) {
+                candidates.push(ifr);
+            } else {
+                candidates.push(containers[c]);
+            }
+        }
+
+        // Se não achou .ad-container, procura iframes soltos que pareçam anúncios
+        if (candidates.length === 0) {
+            var allIframes = document.querySelectorAll('iframe');
+            for (var i = 0; i < allIframes.length; i++) {
+                var src = (allIframes[i].src || '').toLowerCase();
+                var parent = allIframes[i].parentElement;
+                var parentCls = parent ? (parent.className || '').toLowerCase() : '';
+                if (src.indexOf('google') !== -1 || src.indexOf('doubleclick') !== -1 ||
+                    parentCls.indexOf('ad') !== -1) {
+                    candidates.push(allIframes[i]);
+                }
+            }
+        }
+
+        if (candidates.length === 0) {
+            console.log('[GS] Nenhum anúncio/iframe encontrado');
+            return null;
+        }
+
+        var targetRect = targetEl.getBoundingClientRect();
+        var targetCX = targetRect.left + targetRect.width / 2;
+        var targetCY = targetRect.top + targetRect.height / 2;
+        var best = null;
+        var bestDist = Infinity;
+
+        for (var i = 0; i < candidates.length; i++) {
+            var ad = candidates[i];
+            if (ad === targetEl) continue;
+            if (ad.contains && ad.contains(targetEl)) continue;
+            if (targetEl.contains && targetEl.contains(ad)) continue;
+
+            var adRect = ad.getBoundingClientRect();
+            if (adRect.width === 0 || adRect.height === 0) continue;
+
+            var adCX = adRect.left + adRect.width / 2;
+            var adCY = adRect.top + adRect.height / 2;
+            var dx = targetCX - adCX;
+            var dy = targetCY - adCY;
+            var dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < bestDist) {
+                bestDist = dist;
+                best = ad;
+            }
+        }
+
+        if (best) {
+            console.log('[GS] Elemento mais próximo:', best.tagName, best.className || best.id || '', 'dist:', Math.round(bestDist));
+        }
+
+        return (best && bestDist < 600) ? best : null;
+    }
+
+    function highlightAd(el, duration) {
+        if (!el) return;
+        el.classList.add('gs-ad-highlight');
+        try { el.scrollIntoView({ behavior: 'instant', block: 'center' }); } catch (e) {}
+        if (duration > 0) {
+            setTimeout(function () {
+                try { el.classList.remove('gs-ad-highlight'); } catch (e) {}
+            }, duration);
+        }
+    }
+
+    function removeAdHighlight(el) {
+        if (!el) return;
+        try { el.classList.remove('gs-ad-highlight'); } catch (e) {}
+    }
+
+    function clickAdContainer(adEl, callback) {
+        if (!adEl) {
+            if (callback) callback(false);
+            return;
+        }
+
+        var startUrl = location.href;
+        var openBefore = __gs_lastOpenTime;
+
+        highlightAd(adEl, 3000);
+        addFeedback('<span class="warn">🎯 Clicando em anúncio próximo...</span>');
+
+        // Garante que o elemento está clicável
+        try {
+            adEl.style.setProperty('pointer-events', 'auto', 'important');
+            adEl.style.setProperty('z-index', '9999', 'important');
+        } catch (e) {}
+
+        // Se for IFRAME, clica nele diretamente (o iframe em si é o anúncio)
+        if (adEl.tagName === 'IFRAME') {
+            console.log('[GS] Alvo é IFRAME, clicando diretamente');
+            try {
+                // Tenta clicar no iframe via MouseEvent nas coordenadas dele
+                var rect = adEl.getBoundingClientRect();
+                var cx = rect.left + rect.width / 2;
+                var cy = rect.top + rect.height / 2;
+
+                ['mousedown', 'mouseup', 'click'].forEach(function (type) {
+                    var ev = new MouseEvent(type, {
+                        bubbles: true, cancelable: true, view: window,
+                        clientX: cx, clientY: cy
+                    });
+                    adEl.dispatchEvent(ev);
+                });
+
+                adEl.click();
+                adEl.focus();
+
+                // Tenta tecla Enter
+                var kd = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
+                var ku = new KeyboardEvent('keyup', { key: 'Enter', bubbles: true });
+                adEl.dispatchEvent(kd);
+                adEl.dispatchEvent(ku);
+
+                console.log('[GS] Eventos disparados no iframe');
+            } catch (e) {
+                console.log('[GS] Erro no iframe:', e);
+            }
+        }
+
+        // Se for DIV/container, procura iframe dentro e clica no wrapper
+        if (adEl.tagName !== 'IFRAME') {
+            var iframe = adEl.querySelector('iframe');
+            if (iframe) {
+                console.log('[GS] Container tem iframe dentro');
+                try {
+                    iframe.style.setProperty('pointer-events', 'auto', 'important');
+                    iframe.click();
+                    iframe.focus();
+                } catch (e) {}
+            }
+
+            // Também procura <a> direto no container
+            var link = adEl.querySelector('a[href]');
+            if (link) {
+                console.log('[GS] Link no container:', link.href);
+                try {
+                    link.click();
+                    window.open(link.href, '_blank');
+                } catch (e) {}
+            }
+        }
+
+        // Clica no centro do elemento (independente do tipo)
+        try {
+            var rect2 = adEl.getBoundingClientRect();
+            var cx2 = rect2.left + rect2.width / 2;
+            var cy2 = rect2.top + rect2.height / 2;
+            var elAtPoint = document.elementFromPoint(cx2, cy2);
+            if (elAtPoint && elAtPoint !== document.body) {
+                elAtPoint.click();
+                console.log('[GS] elementFromPoint clicou em:', elAtPoint.tagName);
+            }
+        } catch (e) {}
+
+        // Detecta se anúncio abriu (nova aba OU redirecionamento)
+        setTimeout(function () {
+            var adOpened = (__gs_lastOpenTime > openBefore) || (location.href !== startUrl);
+            console.log('[GS] Anúncio abriu?', adOpened, 'href mudou:', location.href !== startUrl);
+            removeAdHighlight(adEl);
+            if (adOpened) {
+                addFeedback('<span class="ok">✓ Anúncio abriu!</span>');
+            }
+            if (callback) callback(adOpened);
+        }, 1200);
+    }
+
+        // ===== CONTAGEM REGRESSIVA =====
+    function countdown(seconds, label, onTick, onDone) {
+        var remaining = seconds;
+        addFeedback('<span class="warn">⏳ ' + label + ' ' + remaining + 's</span>');
+        var timer = setInterval(function () {
+            remaining--;
+            if (remaining > 0) {
+                if (onTick) onTick(remaining);
+            } else {
+                clearInterval(timer);
+                if (onDone) onDone();
+            }
+        }, 1000);
+        return timer;
+    }
+
+        // ===== HIGHLIGHT VISUAL =====
     function highlightElement(el, duration) {
         if (!el) return;
         el.classList.add('gs-highlight');
@@ -415,6 +638,82 @@ FAÇA O SEGUINTE 1. BUSQUE TODOS TEXTOS EM BOTOES OU ELEMENTOS QUE LEVAM A LINKS
                 try { el.classList.remove('gs-highlight'); } catch (e) {}
             }, duration);
         }
+    }
+
+    // ===== ANÚNCIOS =====
+    function highlightAd(el) {
+        if (!el) return;
+        el.classList.add('gs-ad-highlight');
+        try { el.scrollIntoView({ behavior: 'instant', block: 'center' }); } catch (e) {}
+    }
+
+    function removeAdHighlight(el) {
+        if (!el) return;
+        try { el.classList.remove('gs-ad-highlight'); } catch (e) {}
+    }
+
+    function findAds() {
+        var ads = [];
+        for (var s = 0; s < AD_SELECTORS.length; s++) {
+            try {
+                var found = document.querySelectorAll(AD_SELECTORS[s]);
+                for (var i = 0; i < found.length; i++) {
+                    var el = found[i];
+                    if (el.offsetWidth > 0 && el.offsetHeight > 0) {
+                        ads.push(el);
+                    }
+                }
+            } catch (e) {}
+        }
+        // Remove duplicados
+        var unique = [];
+        for (var i = 0; i < ads.length; i++) {
+            var dup = false;
+            for (var j = 0; j < unique.length; j++) {
+                if (ads[i] === unique[j]) { dup = true; break; }
+            }
+            if (!dup) unique.push(ads[i]);
+        }
+        return unique;
+    }
+
+    function clickAd(el, onComplete) {
+        if (!el) {
+            if (onComplete) onComplete(false);
+            return;
+        }
+        highlightAd(el);
+        addFeedback('<span class="warn">🎯 Clicando no anúncio para desbloquear...</span>');
+
+        // Guarda URL atual pra detectar se abriu anúncio
+        var startUrl = location.href;
+        var adWindow = null;
+
+        // Tenta clicar no link dentro do anúncio
+        var adLink = el.querySelector('a[href], [onclick]');
+        var target = adLink || el;
+
+        ['mousedown', 'mouseup', 'click'].forEach(function (type) {
+            try {
+                var ev = new MouseEvent(type, { bubbles: true, cancelable: true, view: window });
+                target.dispatchEvent(ev);
+            } catch (e) {}
+        });
+
+        try {
+            target.click();
+        } catch (e) {}
+
+        // Se abriu nova janela, guarda referência
+        if (target.tagName === 'A' && target.href && target.target === '_blank') {
+            adWindow = window.open(target.href, '_blank');
+        }
+
+        // Espera o delay do anúncio
+        setTimeout(function () {
+            removeAdHighlight(el);
+            if (onComplete) onComplete(true);
+        }, AD_DELAY);
     }
 
     function removeHighlight(el) {
@@ -539,8 +838,12 @@ FAÇA O SEGUINTE 1. BUSQUE TODOS TEXTOS EM BOTOES OU ELEMENTOS QUE LEVAM A LINKS
         #gs-unlock-button:hover { opacity:.9 !important; }
         #gs-unlock-button:active { transform:scale(.98) !important; }
         #gs-telegram { display:none !important; }
+        @keyframes gsAdPulse { 0%,100% { outline:2px solid #f59e0b; outline-offset:2px; } 50% { outline:3px solid #fbbf24; outline-offset:4px; } }
+        .gs-ad-highlight { animation:gsAdPulse 0.6s ease infinite !important; background:rgba(245,158,11,.15) !important; }
         @keyframes gsHighlightPulse { 0%,100% { outline:2px solid #dc2626; outline-offset:2px; } 50% { outline:3px solid #ff4444; outline-offset:4px; } }
         .gs-highlight { animation:gsHighlightPulse 0.6s ease 3 !important; background:rgba(220,38,38,.15) !important; }
+        @keyframes gsAdPulse { 0%,100% { outline:2px solid #f59e0b; outline-offset:2px; } 50% { outline:3px solid #fbbf24; outline-offset:4px; } }
+        .gs-ad-highlight { animation:gsAdPulse 0.5s ease 4 !important; background:rgba(245,158,11,.15) !important; }
         @media (max-width:600px) { #gs-bypass-overlay { right:10px !important; bottom:10px !important; }
             #gs-bypass-box { width:260px !important; } }
     `;
@@ -763,7 +1066,7 @@ FAÇA O SEGUINTE 1. BUSQUE TODOS TEXTOS EM BOTOES OU ELEMENTOS QUE LEVAM A LINKS
             .catch(function (error) { console.error("[GS] nextStage error:", error); callback(null); });
     }
 
-    // ===== INTERAÇÃO COM A PÁGINA (com timeout e highlight) =====
+    // ===== INTERAÇÃO COM A PÁGINA (anúncios → botão, com timeout e highlight) =====
     function interactWithPage(callback) {
         var buttons = scanButtons();
 
@@ -775,37 +1078,81 @@ FAÇA O SEGUINTE 1. BUSQUE TODOS TEXTOS EM BOTOES OU ELEMENTOS QUE LEVAM A LINKS
 
         var best = buttons[0];
         addFeedback('<span class="ok">✓ Botão: "' + best.text.substring(0, 30) + '" [deobf: ' + best.deobf + '] (score ' + best.pct + '%)</span>');
-        updateStatus('Clicando em botão de avanço...');
 
-        // Clica no melhor botão com timeout de proteção
-        smartClick(best, function (urlChanged) {
-            if (urlChanged) {
-                addFeedback('<span class="ok">✓ Navegação detectada após clique</span>');
-            } else {
-                addFeedback('<span class="warn">⚠ Clique não gerou navegação (timeout 3s)</span>');
+        var maxCycles = 4;
+        var cycle = 0;
+
+        function runCycle() {
+            if (manuallyClosed) { if (callback) callback(false); return; }
+            cycle++;
+            if (cycle > maxCycles) {
+                addFeedback('<span class="err">✗ Máximo de ' + maxCycles + ' ciclos atingido</span>');
+                if (callback) callback(false);
+                return;
             }
-            if (callback) callback(true);
-        });
 
-        // Clica no segundo melhor se também for bom
-        if (
-            buttons.length > 1 &&
-            buttons[0].pct >= 65 &&
-            buttons[1].pct >= 65
-        ) {
-            setTimeout(function () {
-                smartClick(buttons[1], function (urlChanged2) {
-                    if (urlChanged2) {
-                        addFeedback('<span class="ok">✓ 2º botão gerou navegação</span>');
+            var fresh = scanButtons();
+            var target = (fresh.length > 0) ? fresh[0] : best;
+
+            var ad = findNearestAd(target.el);
+
+            if (ad) {
+                addFeedback('<span class="warn">🎯 Ciclo #' + cycle + ' — Anúncio encontrado, clicando...</span>');
+                clickAdContainer(ad, function (adOpened) {
+                    if (adOpened) {
+                        countdown(5, 'Esperando pro botão desbloquear...', function (sec) {
+                            addFeedback('<span class="warn">⏳ Esperando pro botão desbloquear... ' + sec + 's</span>');
+                        }, function () {
+                            tryButtonClick(target, function (worked) {
+                                if (worked) {
+                                    if (callback) callback(true);
+                                } else {
+                                    addFeedback('<span class="warn">⚠ Botão ainda travado, repetindo ciclo...</span>');
+                                    setTimeout(runCycle, 1000);
+                                }
+                            });
+                        });
+                    } else {
+                        addFeedback('<span class="warn">⚠ Anúncio não abriu — tentando botão direto</span>');
+                        tryButtonClick(target, function (worked) {
+                            if (worked) {
+                                if (callback) callback(true);
+                            } else {
+                                setTimeout(runCycle, 1000);
+                            }
+                        });
                     }
                 });
-            }, CLICK_DELAY);
+            } else {
+                addFeedback('<span class="warn">⚠ Sem anúncio próximo — tentando botão direto</span>');
+                tryButtonClick(target, function (worked) {
+                    if (worked) {
+                        if (callback) callback(true);
+                    } else {
+                        setTimeout(runCycle, 1000);
+                    }
+                });
+            }
         }
 
+        runCycle();
         return true;
     }
 
-    function updateStage(current, total) {
+    function tryButtonClick(target, callback) {
+        updateStatus('Clicando em botão de avanço...');
+        smartClick(target.el, function (urlChanged) {
+            if (urlChanged) {
+                addFeedback('<span class="ok">✓ Botão funcionou!</span>');
+                if (callback) callback(true);
+            } else {
+                addFeedback('<span class="warn">⚠ Clique no botão não gerou navegação</span>');
+                if (callback) callback(false);
+            }
+        });
+    }
+
+        function updateStage(current, total) {
         showBypassUI();
         renderStage(current, total, "Processando...");
         setState({ active: true, running: true, dismissed: false, completed: false, currentStage: current, totalStages: total, status: "Processando..." });
@@ -884,14 +1231,14 @@ FAÇA O SEGUINTE 1. BUSQUE TODOS TEXTOS EM BOTOES OU ELEMENTOS QUE LEVAM A LINKS
                 }
 
                 // TERCEIRO: API não retornou link, tenta fallback pelo botão
-                // Aguarda a interação terminar (máx 4s) antes de decidir fallback
+                // Aguarda a interação terminar (máx 35s por causa do loop de anúncio)
                 var fallbackTimer = setInterval(function () {
                     if (interactionDone || manuallyClosed) {
                         clearInterval(fallbackTimer);
                         if (manuallyClosed) return;
 
                         if (!clicked) {
-                            addFeedback('<span class="err">✗ API não retornou link e não achou botão</span>');
+                            addFeedback('<span class="err">✗ API não retornou link e botão não funcionou</span>');
                             updateStatus("API sem resposta — tentando fallback...");
 
                             // Fallback: tenta de novo
@@ -913,21 +1260,25 @@ FAÇA O SEGUINTE 1. BUSQUE TODOS TEXTOS EM BOTOES OU ELEMENTOS QUE LEVAM A LINKS
                         } else {
                             // Clicou mas API não retornou link — continua para próxima fase
                             if (progress < totalStages + 1) {
-                                setTimeout(function () { progress++; next(); }, 3000);
+                                progress++;
+                                addFeedback('⏳ Aguardando ' + (CLICK_DELAY / 1000) + 's antes da próxima fase...');
+                                setTimeout(next, CLICK_DELAY);
                             }
                         }
                     }
-                }, 200);
+                }, 500);
 
-                // Safety: se interactionDone nunca ficar true, força continuação em 5s
+                // Safety: se interactionDone nunca ficar true, força continuação em 35s
                 setTimeout(function () {
                     clearInterval(fallbackTimer);
                     if (!interactionDone && !manuallyClosed && progress < totalStages + 1) {
-                        progress++; next();
+                        progress++;
+                        addFeedback('⏳ Safety: aguardando ' + (CLICK_DELAY / 1000) + 's...');
+                        setTimeout(next, CLICK_DELAY);
                     }
-                }, 5000);
+                }, 35000);
 
-                return; // Sai do callback early, o fallbackTimer continua
+                return; // Sai do callback early, o fallbackTimer continua, o fallbackTimer continua
 
                 if (progress < totalStages + 1) {
                     progress++;
