@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aincrad Farm — RORAX Edition</title>
+    <title>GS Farm — RORAX Edition v2.0</title>
     <link rel="stylesheet" href="style.css">
     <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 </head>
@@ -13,14 +13,17 @@
             <div class="brand">
                 <div class="brand-icon">⚔️</div>
                 <div>
-                    <h1>Aincrad Farm</h1>
-                    <span>v1.1.0 — RORAX</span>
+                    <h1>GS Farm</h1>
+                    <span>v2.0 — RORAX</span>
                 </div>
             </div>
             <nav class="nav">
                 <button class="nav-item active" data-tab="dashboard">📊 Dashboard</button>
-                <button class="nav-item" data-tab="config">⚙️ Configurações</button>
+                <button class="nav-item" data-tab="links">🔗 Links</button>
+                <button class="nav-item" data-tab="peaks">⏰ Picos</button>
                 <button class="nav-item" data-tab="proxies">🌐 Proxies</button>
+                <button class="nav-item" data-tab="config">⚙️ Config</button>
+                <button class="nav-item" data-tab="analytics">📈 Analytics</button>
                 <button class="nav-item" data-tab="logs">📋 Logs</button>
             </nav>
             <div class="status-bar">
@@ -30,7 +33,7 @@
         </aside>
 
         <main class="main">
-            <!-- DASHBOARD -->
+            <!-- ===== DASHBOARD ===== -->
             <section class="tab active" id="tab-dashboard">
                 <header class="page-header">
                     <h2>Dashboard</h2>
@@ -42,22 +45,34 @@
 
                 <div class="stats-grid">
                     <div class="stat-card">
-                        <div class="stat-label">Sucessos</div>
+                        <div class="stat-label">Sucessos Hoje</div>
                         <div class="stat-value" id="stat-success">0</div>
                         <div class="stat-sub" id="stat-rate">0% taxa</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Ganhos Estimados</div>
+                        <div class="stat-value accent-gold" id="stat-earnings">R$ 0,00</div>
+                        <div class="stat-sub" id="stat-earnings-sub">R$ 0,00 / bypass</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-label">Falhas</div>
                         <div class="stat-value fail" id="stat-fail">0</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-label">Total Rodadas</div>
-                        <div class="stat-value" id="stat-runs">0</div>
-                    </div>
-                    <div class="stat-card">
                         <div class="stat-label">Instâncias</div>
                         <div class="stat-value" id="stat-instances">0</div>
                     </div>
+                </div>
+
+                <div class="goal-panel" id="goal-panel" style="display:none;">
+                    <div class="goal-header">
+                        <span>🎯 Meta Diária</span>
+                        <span id="goal-text">R$ 0,00 / R$ 0,00</span>
+                    </div>
+                    <div class="goal-bar-bg">
+                        <div class="goal-bar-fill" id="goal-bar-fill" style="width:0%"></div>
+                    </div>
+                    <div class="goal-sub" id="goal-sub">Configure sua meta em Analytics</div>
                 </div>
 
                 <div class="instances-panel">
@@ -68,102 +83,270 @@
                 </div>
             </section>
 
-            <!-- CONFIG -->
-            <section class="tab" id="tab-config">
-                <header class="page-header"><h2>Configurações</h2></header>
-                <div class="form-grid">
-                    <div class="form-group wide">
-                        <label>Links para Farmar (um por linha)</label>
-                        <textarea id="cfg-links" rows="6" placeholder="https://alpharede.com/abc&#10;https://rodaemotor.com/xyz"></textarea>
+            <!-- ===== LINKS ===== -->
+            <section class="tab" id="tab-links">
+                <header class="page-header">
+                    <h2>🔗 Links para Farmar</h2>
+                    <div class="actions">
+                        <button class="btn btn-secondary" id="btn-add-link">+ Adicionar Link</button>
                     </div>
+                </header>
+                <div class="links-info">
+                    <span>💡 Ajuste o peso de cada link. A porcentagem é calculada automaticamente.</span>
+                    <span id="links-total-pct" style="font-weight:600;">Total: 0 link(s)</span>
+                </div>
+                <div class="links-container" id="links-container"></div>
+            </section>
 
-                    <div class="form-group">
-                        <label>Quantidade de Instâncias</label>
-                        <input type="number" id="cfg-instances" min="1" max="10" value="3">
+            <!-- ===== PICOS ===== -->
+            <section class="tab" id="tab-peaks">
+                <header class="page-header"><h2>⏰ Mapa de Calor — Horários de Pico</h2></header>
+                <div class="peaks-info">
+                    <span>💡 Arraste as barras para cima/baixo. Quanto maior, mais intensidade.</span>
+                    <button class="btn btn-sm btn-secondary" id="btn-reset-peaks">↺ Resetar Padrão</button>
+                </div>
+                <div class="heatmap-wrapper">
+                    <div class="heatmap-container" id="heatmap-container"></div>
+                    <div class="heatmap-labels">
+                        <span>00h</span><span>03h</span><span>06h</span><span>09h</span><span>12h</span><span>15h</span><span>18h</span><span>21h</span><span>23h</span>
                     </div>
-                    <div class="form-group">
-                        <label>Modo Headless</label>
-                        <select id="cfg-headless">
-                            <option value="false">Visível (debug)</option>
-                            <option value="true">Headless (oculto)</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Delay Mínimo (ms)</label>
-                        <input type="number" id="cfg-min-delay" value="5000">
-                    </div>
-                    <div class="form-group">
-                        <label>Delay Máximo (ms)</label>
-                        <input type="number" id="cfg-max-delay" value="15000">
-                    </div>
-                    <div class="form-group">
-                        <label>View Time (ms)</label>
-                        <input type="number" id="cfg-view-time" value="4000">
-                    </div>
-
-                    <div class="form-group">
-                        <label>Usar Proxies</label>
-                        <select id="cfg-use-proxies">
-                            <option value="true">Sim</option>
-                            <option value="false">Não (IP real)</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Randomizar User-Agent</label>
-                        <select id="cfg-random-ua">
-                            <option value="true">Sim</option>
-                            <option value="false">Não</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Limpar Storage</label>
-                        <select id="cfg-clear-storage">
-                            <option value="true">Sim</option>
-                            <option value="false">Não</option>
-                        </select>
-                    </div>
-
-                    <!-- TIER LIST VISUAL -->
-                    <div class="form-group wide">
-                        <label>🔗 Tier List — Links Populares</label>
-                        <div class="tier-container" id="tier-container">
-                            <!-- JS popula -->
-                        </div>
-                        <button class="btn btn-sm btn-secondary" id="btn-add-tier" type="button">+ Adicionar Link Popular</button>
-                        <small>Quanto maior o peso, mais vezes o link é escolhido. Use * para aplicar em todos.</small>
-                    </div>
-
-                    <!-- PEAK HOURS VISUAL -->
-                    <div class="form-group wide">
-                        <label>⏰ Horários de Pico</label>
-                        <div class="peak-container" id="peak-container">
-                            <!-- JS popula -->
-                        </div>
-                        <button class="btn btn-sm btn-secondary" id="btn-add-peak" type="button">+ Adicionar Horário</button>
-                        <small>Fora desses horários, o farm fica mais lento (humanizado).</small>
-                    </div>
-
-                    <div class="form-actions">
-                        <button class="btn btn-secondary" id="btn-save-cfg">💾 Salvar Config</button>
-                        <button class="btn btn-secondary" id="btn-load-cfg">🔄 Recarregar</button>
-                    </div>
+                </div>
+                <div class="peaks-legend">
+                    <div class="legend-item"><div class="legend-color" style="background:#1a0a0a"></div><span>Parado</span></div>
+                    <div class="legend-item"><div class="legend-color" style="background:#7c2d12"></div><span>Lento</span></div>
+                    <div class="legend-item"><div class="legend-color" style="background:#dc2626"></div><span>Pico</span></div>
                 </div>
             </section>
 
-            <!-- PROXIES -->
+            <!-- ===== PROXIES ===== -->
             <section class="tab" id="tab-proxies">
                 <header class="page-header">
-                    <h2>Gerenciador de Proxies</h2>
-                    <button class="btn btn-primary" id="btn-refresh-proxies">🔄 Atualizar & Testar</button>
+                    <h2>🌐 Gerenciador de Proxies</h2>
+                    <div class="actions">
+                        <button class="btn btn-secondary" id="btn-health-check">❤️ Health Check</button>
+                        <button class="btn btn-primary" id="btn-refresh-proxies">🔄 Atualizar & Testar</button>
+                    </div>
                 </header>
                 <div class="proxy-stats" id="proxy-stats">0 proxies carregados</div>
                 <div class="proxy-list" id="proxy-list">
-                    <div class="empty-state">Clique em "Atualizar & Testar" para buscar proxies do GitHub.</div>
+                    <div class="empty-state">Clique em "Atualizar & Testar" para buscar proxies.</div>
                 </div>
             </section>
 
-            <!-- LOGS -->
+            <!-- ===== CONFIG ===== -->
+            <section class="tab" id="tab-config">
+                <header class="page-header"><h2>⚙️ Configurações Gerais</h2></header>
+                
+                <div class="config-grid">
+                    <!-- Gerais -->
+                    <div class="config-card">
+                        <h3>🎛️ Gerais</h3>
+                        <div class="form-group">
+                            <label>Instâncias</label>
+                            <input type="number" id="cfg-instances" min="1" max="10" value="3">
+                        </div>
+                        <div class="form-group">
+                            <label>Headless</label>
+                            <select id="cfg-headless">
+                                <option value="false">Visível</option>
+                                <option value="true">Oculto</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Delay Mín (ms)</label>
+                            <input type="number" id="cfg-min-delay" value="5000">
+                        </div>
+                        <div class="form-group">
+                            <label>Delay Máx (ms)</label>
+                            <input type="number" id="cfg-max-delay" value="15000">
+                        </div>
+                        <div class="form-group">
+                            <label>View Time (ms)</label>
+                            <input type="number" id="cfg-view-time" value="4000">
+                        </div>
+                        <div class="form-group">
+                            <label>Usar Proxies</label>
+                            <select id="cfg-use-proxies">
+                                <option value="true">Sim</option>
+                                <option value="false">Não</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Random UA</label>
+                            <select id="cfg-random-ua">
+                                <option value="true">Sim</option>
+                                <option value="false">Não</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Limpar Storage</label>
+                            <select id="cfg-clear-storage">
+                                <option value="true">Sim</option>
+                                <option value="false">Não</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Stealth Mode (minimiza pra bandeja)</label>
+                            <select id="cfg-stealth">
+                                <option value="false">Desativado</option>
+                                <option value="true">Ativado</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Blacklist & Cooldown -->
+                    <div class="config-card">
+                        <h3>🛡️ Proteção</h3>
+                        <div class="form-group">
+                            <label>Blacklist (auto-pausa link)</label>
+                            <select id="cfg-blacklist-enabled">
+                                <option value="true">Ativada</option>
+                                <option value="false">Desativada</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Máx falhas antes de pausar</label>
+                            <input type="number" id="cfg-blacklist-max" min="1" max="20" value="5">
+                        </div>
+                        <div class="form-group">
+                            <label>Cooldown blacklist (min)</label>
+                            <input type="number" id="cfg-blacklist-cooldown" min="1" max="120" value="30">
+                        </div>
+                        <div class="form-group">
+                            <label>Cooldown entre usos do mesmo link</label>
+                            <select id="cfg-cooldown-enabled">
+                                <option value="true">Ativado</option>
+                                <option value="false">Desativado</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Cooldown por link (min)</label>
+                            <input type="number" id="cfg-cooldown-min" min="1" max="60" value="10">
+                        </div>
+                        <div class="tip-box" id="blacklist-status">
+                            Nenhum link na blacklist.
+                        </div>
+                    </div>
+
+                    <!-- Webhook -->
+                    <div class="config-card">
+                        <h3>🔔 Webhook</h3>
+                        <div class="form-group">
+                            <label>Notificações</label>
+                            <select id="cfg-webhook-enabled">
+                                <option value="false">Desativado</option>
+                                <option value="true">Ativado</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Tipo</label>
+                            <select id="cfg-webhook-type">
+                                <option value="discord">Discord</option>
+                                <option value="telegram">Telegram</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="webhook-discord-group">
+                            <label>Webhook URL (Discord)</label>
+                            <input type="text" id="cfg-webhook-url" placeholder="https://discord.com/api/webhooks/...">
+                        </div>
+                        <div class="form-group" id="webhook-telegram-group" style="display:none;">
+                            <label>Bot Token (Telegram)</label>
+                            <input type="text" id="cfg-webhook-token" placeholder="123456:ABC-DEF...">
+                            <label style="margin-top:8px;">Chat ID</label>
+                            <input type="text" id="cfg-webhook-chat" placeholder="-1001234567890">
+                        </div>
+                        <button class="btn btn-secondary" id="btn-test-webhook" style="width:100%;">🧪 Testar Webhook</button>
+                    </div>
+
+                    <!-- Perfis -->
+                    <div class="config-card">
+                        <h3>📁 Perfis / Campanhas</h3>
+                        <div class="form-group">
+                            <label>Salvar como perfil</label>
+                            <div style="display:flex;gap:8px;">
+                                <input type="text" id="cfg-profile-name" placeholder="Nome do perfil" style="flex:1;">
+                                <button class="btn btn-primary" id="btn-save-profile">💾 Salvar</button>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Carregar perfil</label>
+                            <select id="cfg-profile-select">
+                                <option value="">-- Selecione --</option>
+                            </select>
+                        </div>
+                        <div class="profiles-list" id="profiles-list"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ===== ANALYTICS ===== -->
+            <section class="tab" id="tab-analytics">
+                <header class="page-header"><h2>📈 Analytics & Simulador</h2></header>
+                
+                <div class="analytics-grid">
+                    <div class="analytics-card">
+                        <h3>💰 Simulador de Ganhos</h3>
+                        <div class="form-group">
+                            <label>Ganho médio por bypass (R$)</label>
+                            <input type="number" id="cfg-earnings" step="0.001" min="0" value="0.05">
+                        </div>
+                        <div class="earnings-grid">
+                            <div class="earnings-box">
+                                <div class="earnings-label">Hoje</div>
+                                <div class="earnings-value" id="earn-today">R$ 0,00</div>
+                            </div>
+                            <div class="earnings-box">
+                                <div class="earnings-label">Estimado/mês</div>
+                                <div class="earnings-value" id="earn-month">R$ 0,00</div>
+                            </div>
+                            <div class="earnings-box">
+                                <div class="earnings-label">Estimado/ano</div>
+                                <div class="earnings-value" id="earn-year">R$ 0,00</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="analytics-card">
+                        <h3>🎯 Meta Diária</h3>
+                        <div class="form-group">
+                            <label>Ativar meta</label>
+                            <select id="cfg-goal-enabled">
+                                <option value="false">Desativada</option>
+                                <option value="true">Ativada</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Valor da meta (R$)</label>
+                            <input type="number" id="cfg-goal-amount" step="0.01" min="0" value="50">
+                        </div>
+                        <div class="goal-mini">
+                            <div class="goal-mini-bar-bg">
+                                <div class="goal-mini-bar-fill" id="goal-mini-fill" style="width:0%"></div>
+                            </div>
+                            <span id="goal-mini-text">R$ 0,00 / R$ 50,00</span>
+                        </div>
+                        <div class="tip-box">
+                            Quando a meta for atingida, o farm para automaticamente.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="analytics-card wide">
+                    <h3>📊 Bypasses por Link</h3>
+                    <div id="link-stats-container">
+                        <div class="empty-state">Nenhum dado ainda. Inicie o farm para coletar estatísticas.</div>
+                    </div>
+                </div>
+
+                <div class="analytics-card wide">
+                    <h3>📈 Timeline — Sucessos vs Falhas (últimos 7 dias)</h3>
+                    <div class="timeline-container" id="timeline-container">
+                        <div class="empty-state">Nenhum dado histórico.</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ===== LOGS ===== -->
             <section class="tab" id="tab-logs">
                 <header class="page-header">
                     <h2>Logs em Tempo Real</h2>

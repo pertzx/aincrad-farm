@@ -32,9 +32,9 @@ class ProxyManager {
         this.lastFetch = 0;
         this.isScanning = false;
         this.scanTimer = null;
+        this.continuousScan = true; // NOVO
     }
 
-    // Inicia scanner contínuo em background (nunca bloqueia)
     startScanner() {
         if (this.isScanning) return;
         this.isScanning = true;
@@ -53,29 +53,64 @@ class ProxyManager {
         } catch (e) {
             console.error('[ProxyManager] Scan error:', e.message);
         }
-        // Próximo ciclo em 45 segundos
-        this.scanTimer = setTimeout(() => this._scanLoop(), 45000);
+        // Espera 30s e recomeça do zero (pega proxies novas, retesta todas)
+        this.scanTimer = setTimeout(() => this._scanLoop(), 30000);
     }
 
     async _doScan() {
         const raw = await this.fetchRaw();
         const all = this.parseList(raw);
-        // Pega até 30 proxies HTTP/HTTPS/SOCKS5
-        const candidates = all.filter(p => ['http','https','socks5'].includes(p.protocol)).slice(0, 30);
-        
-        const results = [];
-        // Testa em lotes de 6
-        for (let i = 0; i < candidates.length; i += 6) {
-            const batch = candidates.slice(i, i + 6);
-            const batchResults = await Promise.all(batch.map(p => this.testProxy(p)));
-            results.push(...batchResults);
+        const candidates = all.filter(p => ['http', 'https', 'socks5'].includes(p.protocol));
+        console.log(`[ProxyManager] ${candidates.length} proxies para testar...`);
+
+        // Limpa lista antiga no início de cada scan completo
+        this.proxies = [];
+        this._broadcast('proxy:updated', []);
+
+        // Testa em lotes de 10 (não bloqueia a UI, mas processa todas)
+        const BATCH_SIZE = 10;
+        for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
+            const batch = candidates.slice(i, i + BATCH_SIZE);
+            const results = await Promise.all(batch.map(p => this.testProxy(p)));
+
+            // Adiciona as que funcionaram imediatamente
+            const working = results.filter(p => p.working);
+            if (working.length > 0) {
+                this.proxies.push(...working);
+                // Reordena por ping
+                this.proxies.sort((a, b) => a.ping - b.ping);
+                console.log(`[ProxyManager] +${working.length} OK (${this.proxies.length} total)`);
+                this._broadcast('proxy:updated', this.proxies);
+            }
         }
 
-        const working = results.filter(p => p.working).sort((a, b) => a.ping - b.ping);
-        this.proxies = working;
         this.lastFetch = Date.now();
-        console.log(`[ProxyManager] Scan completo: ${working.length} proxies OK`);
-        return working;
+        console.log(`[ProxyManager] Scan completo: ${this.proxies.length} proxies OK de ${candidates.length}`);
+        return this.proxies;
+    }
+
+    async healthCheckAll() {
+        if (this.proxies.length === 0) return [];
+        console.log(`[ProxyManager] Health check em ${this.proxies.length} proxies...`);
+
+        const BATCH_SIZE = 10;
+        const stillWorking = [];
+
+        for (let i = 0; i < this.proxies.length; i += BATCH_SIZE) {
+            const batch = this.proxies.slice(i, i + BATCH_SIZE);
+            const results = await Promise.all(batch.map(p => this.testProxy({ ...p })));
+            const ok = results.filter(p => p.working);
+            stillWorking.push(...ok);
+
+            // Atualiza lista parcial imediatamente
+            this.proxies = stillWorking.concat(this.proxies.slice(i + BATCH_SIZE));
+            this.proxies.sort((a, b) => a.ping - b.ping);
+            this._broadcast('proxy:updated', this.proxies);
+        }
+
+        this.proxies = stillWorking.sort((a, b) => a.ping - b.ping);
+        console.log(`[ProxyManager] Health check: ${this.proxies.length} proxies ainda OK`);
+        return this.proxies;
     }
 
     async fetchRaw() {
@@ -123,7 +158,7 @@ class ProxyManager {
                 this.geoCache.set(ip, geo);
                 return geo;
             }
-        } catch (e) {}
+        } catch (e) { }
         return { country: 'Desconhecido', countryCode: '??', region: '', city: '', isp: '', flag: '🌐' };
     }
 
@@ -144,6 +179,7 @@ class ProxyManager {
                     try {
                         const json = JSON.parse(data);
                         proxy.working = true;
+                        proxy.alive = true;
                         proxy.origin = json.origin;
                         proxy.ping = Date.now() - start;
                         proxy.geo = await this.getGeo(proxy.ip);
@@ -154,13 +190,21 @@ class ProxyManager {
                         resolve(proxy);
                     } catch {
                         proxy.working = false;
+                        proxy.alive = false;
                         resolve(proxy);
                     }
                 });
             });
-            req.on('error', () => { proxy.working = false; resolve(proxy); });
-            req.on('timeout', () => { req.destroy(); proxy.working = false; resolve(proxy); });
+            req.on('error', () => { proxy.working = false; proxy.alive = false; resolve(proxy); });
+            req.on('timeout', () => { req.destroy(); proxy.working = false; proxy.alive = false; resolve(proxy); });
             req.end();
+        });
+    }
+
+    _broadcast(channel, data) {
+        const { BrowserWindow } = require('electron');
+        BrowserWindow.getAllWindows().forEach(w => {
+            if (!w.isDestroyed()) w.webContents.send(channel, data);
         });
     }
 
@@ -184,3 +228,4 @@ class ProxyManager {
 }
 
 module.exports = ProxyManager;
+

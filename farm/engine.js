@@ -7,8 +7,8 @@ const Scheduler = require('./scheduler');
 const BYPASS_SCRIPT = fs.readFileSync(path.join(__dirname, 'bypass-inject.js'), 'utf-8');
 
 const SUPPORTED_ROOTS = [
-    'alpharede.com','rodaemotor.com','guis2.com','horoscopeonday.com',
-    'forumdinheiro.com','milbviral.com','tarviral.com','aincradmods.com'
+    'alpharede.com', 'rodaemotor.com', 'guis2.com', 'horoscopeonday.com',
+    'forumdinheiro.com', 'milbviral.com', 'tarviral.com', 'gsmods.com'
 ];
 
 function isSupportedHost(url) {
@@ -27,6 +27,7 @@ class FarmEngine {
         this.running = false;
         this.stats = { totalRuns: 0, successCount: 0, failCount: 0, startTime: null };
         this.logs = [];
+        this.healthCheckInterval = null;
     }
 
     log(instanceId, level, message) {
@@ -48,14 +49,103 @@ class FarmEngine {
         this._broadcast('farm:status-update', this.getStatus());
     }
 
+    async _sendWebhook(message) {
+        const cfg = this.configStore.get('webhook', { enabled: false });
+        if (!cfg.enabled) return;
+        try {
+            const fetch = (await import('node-fetch')).default;
+            if (cfg.type === 'discord' && cfg.url) {
+                await fetch(cfg.url, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: message })
+                });
+            }
+            if (cfg.type === 'telegram' && cfg.botToken && cfg.chatId) {
+                await fetch(`https://api.telegram.org/bot${cfg.botToken}/sendMessage`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: cfg.chatId, text: message, parse_mode: 'Markdown' })
+                });
+            }
+        } catch (e) { console.error('[Webhook]', e.message); }
+    }
+
+    _recordSuccess(link) {
+        const today = new Date().toISOString().split('T')[0];
+        const stats = this.configStore.get('linkStats', {});
+        if (!stats[link]) stats[link] = { success: 0, fail: 0, lastSuccess: null };
+        stats[link].success++;
+        stats[link].lastSuccess = new Date().toISOString();
+        this.configStore.set('linkStats', stats);
+
+        const daily = this.configStore.get('dailyStats', {});
+        if (!daily[today]) daily[today] = { success: 0, fail: 0 };
+        daily[today].success++;
+        this.configStore.set('dailyStats', daily);
+        this.configStore.set('totalSuccess', this.configStore.get('totalSuccess', 0) + 1);
+
+        // Reset fail count on success
+        const bl = this.configStore.get('pausedLinks', {});
+        if (bl[link]) { delete bl[link]; this.configStore.set('pausedLinks', bl); }
+
+        // Record last used
+        const lu = this.configStore.get('linkLastUsed', {});
+        lu[link] = Date.now();
+        this.configStore.set('linkLastUsed', lu);
+    }
+
+    _recordFail(link) {
+        const today = new Date().toISOString().split('T')[0];
+        const stats = this.configStore.get('linkStats', {});
+        if (!stats[link]) stats[link] = { success: 0, fail: 0, lastSuccess: null };
+        stats[link].fail++;
+        this.configStore.set('linkStats', stats);
+
+        const daily = this.configStore.get('dailyStats', {});
+        if (!daily[today]) daily[today] = { success: 0, fail: 0 };
+        daily[today].fail++;
+        this.configStore.set('dailyStats', daily);
+        this.configStore.set('totalFail', this.configStore.get('totalFail', 0) + 1);
+
+        // Blacklist check
+        const blacklistCfg = this.configStore.get('blacklist', { enabled: true, maxFails: 5, cooldownMinutes: 30 });
+        if (blacklistCfg.enabled) {
+            const bl = this.configStore.get('pausedLinks', {});
+            const fails = (stats[link].fail || 0) - (stats[link].success || 0);
+            if (fails >= blacklistCfg.maxFails) {
+                bl[link] = { pausedAt: Date.now(), reason: 'blacklist' };
+                this.configStore.set('pausedLinks', bl);
+                this.log('MAIN', 'warn', `⛔ Link blacklisted: ${link} (${blacklistCfg.cooldownMinutes}min cooldown)`);
+                this._sendWebhook(`⛔ **Link Blacklisted**\n${link}\nCooldown: ${blacklistCfg.cooldownMinutes} minutos`);
+            }
+        }
+    }
+
+    _checkGoal() {
+        const goal = this.configStore.get('dailyGoal', { enabled: false, amount: 50 });
+        if (!goal.enabled) return false;
+        const perBypass = this.configStore.get('earningsPerBypass', 0.05);
+        const today = new Date().toISOString().split('T')[0];
+        const daily = this.configStore.get('dailyStats', {});
+        const todaySuccess = (daily[today] && daily[today].success) || 0;
+        const earned = todaySuccess * perBypass;
+        if (earned >= goal.amount) {
+            this.log('MAIN', 'success', `🎉 Meta diária de R$ ${goal.amount.toFixed(2)} batida!`);
+            this._sendWebhook(`🎉 **Meta Diária Atingida!**\nGanhos: R$ ${earned.toFixed(2)} / R$ ${goal.amount.toFixed(2)}`);
+            return true;
+        }
+        return false;
+    }
+
     async start(config) {
         if (this.running) return { ok: false, error: 'Já está rodando' };
+        if (this._checkGoal()) return { ok: false, error: 'Meta diária já foi batida!' };
+
         this.running = true;
         this.stats.startTime = Date.now();
         const count = Math.min(Math.max(1, config.instances || 1), 10);
         this.log('MAIN', 'info', `Iniciando farm com ${count} instância(s)...`);
+        this._sendWebhook(`🚀 **Farm Iniciado**\nInstâncias: ${count}\nLinks: ${(config.links || []).length}`);
 
-        // Inicia scanner de proxy em background (nunca bloqueia)
         if (config.useProxies !== false) {
             this.proxyManager.startScanner();
             const existing = this.proxyManager.getProxies();
@@ -64,9 +154,15 @@ class FarmEngine {
             } else {
                 this.log('MAIN', 'warn', 'Nenhum proxy ainda — usando IP direto até carregar');
             }
-            // Notifica UI das proxies existentes
             this._broadcast('proxy:updated', existing);
         }
+
+        // No start(), em vez de setInterval simples:
+        this.healthCheckInterval = setInterval(async () => {
+            if (!this.running) return;
+            // Faz health check em streaming também
+            await this.proxyManager.healthCheckAll();
+        }, 300000); // 5 min
 
         for (let i = 0; i < count; i++) {
             await this._spawnInstance(i, config);
@@ -102,7 +198,7 @@ class FarmEngine {
         }
 
         if (config.clearStorage !== false) {
-            try { await sess.clearStorageData(); await sess.clearCache(); } catch (e) {}
+            try { await sess.clearStorageData(); await sess.clearCache(); } catch (e) { }
         }
 
         const win = new BrowserWindow({
@@ -126,7 +222,7 @@ class FarmEngine {
         this.instances.set(id, {
             window: win, session: sess, fingerprint: fp, status: 'starting',
             cycle: 0, phase: null, currentLink: null, proxy: proxy,
-            timeoutId: null, pollId: null
+            timeoutId: null, pollId: null, resolved: false
         });
         this._broadcastStatus();
 
@@ -149,7 +245,7 @@ class FarmEngine {
     async _readBypassState(win) {
         try {
             return await win.webContents.executeJavaScript(`
-                (function(){ try { const r=localStorage.getItem('aincrad_bypass_state_v6'); return r?JSON.parse(r):null; } catch(e){return null;} })()
+                (function(){ try { const r=localStorage.getItem('gs_bypass_state_v6'); return r?JSON.parse(r):null; } catch(e){return null;} })()
             `);
         } catch (e) { return null; }
     }
@@ -160,28 +256,30 @@ class FarmEngine {
 
     async _runCycle(id, config, win, sess, currentProxy, isRetry = false) {
         if (!this.running) return;
+        if (this._checkGoal()) { this.stopAll(); return; }
+
         const inst = this.instances.get(id);
         if (!inst) return;
 
         if (inst.timeoutId) clearTimeout(inst.timeoutId);
-        if (inst.pollId) clearInterval(inst.pollId);
+        if (inst.pollId) clearTimeout(inst.pollId);
 
         inst.cycle++;
         inst.status = 'running';
         inst.phase = null;
+        inst.resolved = false;
         this._broadcastStatus();
 
-        const scheduler = new Scheduler(config);
+        const scheduler = new Scheduler(config, this.configStore);
 
         if (scheduler.shouldTakeBreak(inst.cycle)) {
             const bt = scheduler.getBreakDuration();
-            this.log(id, 'info', `Pausa ${(bt/1000).toFixed(0)}s`);
+            this.log(id, 'info', `Pausa ${(bt / 1000).toFixed(0)}s`);
             inst.status = 'break';
             this._broadcastStatus();
             await this._sleep(bt);
         }
 
-        // Se forçou novo proxy ou não tem, tenta pegar outro do pool atual
         if (isRetry || !currentProxy) {
             if (config.useProxies !== false) {
                 const np = this.proxyManager.pickWeighted();
@@ -191,13 +289,13 @@ class FarmEngine {
                         await sess.setProxy({ proxyRules: pr });
                         currentProxy = np; inst.proxy = np;
                         this.log(id, 'info', `Novo proxy: ${this._formatLocation(np)} — ${np.ping}ms`);
-                    } catch (e) {}
+                    } catch (e) { }
                 }
             }
         }
 
         if (config.clearStorage !== false) {
-            try { await sess.clearStorageData(); await sess.clearCache(); } catch (e) {}
+            try { await sess.clearStorageData(); await sess.clearCache(); } catch (e) { }
         }
 
         const links = config.links || [];
@@ -206,7 +304,15 @@ class FarmEngine {
             inst.status = 'idle'; this._broadcastStatus(); return;
         }
 
-        const link = scheduler.pickNextLink(links, config.tierList || []);
+        const link = scheduler.pickNextLink(links);
+        if (!link) {
+            this.log(id, 'warn', 'Todos os links em cooldown/blacklist. Aguardando...');
+            inst.timeoutId = setTimeout(() => {
+                if (this.running && !win.isDestroyed()) this._runCycle(id, config, win, sess, currentProxy);
+            }, 10000);
+            return;
+        }
+
         this.log(id, 'info', `Link: ${link}`);
         inst.status = 'bypassing'; inst.currentLink = link; this._broadcastStatus();
 
@@ -220,6 +326,7 @@ class FarmEngine {
 
         if (navFail) {
             this.stats.failCount++;
+            this._recordFail(link);
             this._broadcastStatus();
             inst.timeoutId = setTimeout(() => {
                 if (this.running && !win.isDestroyed()) this._runCycle(id, config, win, sess, currentProxy, true);
@@ -231,15 +338,15 @@ class FarmEngine {
 
         const startTime = Date.now();
         const TIMEOUT_MS = 45000;
-        let resolved = false;
 
-        inst.pollId = setInterval(async () => {
-            if (resolved || !this.running || win.isDestroyed()) {
-                if (inst.pollId) { clearInterval(inst.pollId); inst.pollId = null; }
-                return;
-            }
+        const doPoll = async () => {
+            if (inst.resolved || !this.running || win.isDestroyed()) return;
+
             const url = await this._readCurrentUrl(win);
+            if (inst.resolved) return;
+
             const bstate = await this._readBypassState(win);
+            if (inst.resolved) return;
 
             if (bstate && bstate.currentStage != null && bstate.totalStages != null) {
                 inst.phase = { current: bstate.currentStage, total: bstate.totalStages };
@@ -247,12 +354,15 @@ class FarmEngine {
             }
 
             if (url && !isSupportedHost(url) && url !== 'about:blank') {
-                resolved = true;
-                if (inst.pollId) { clearInterval(inst.pollId); inst.pollId = null; }
+                if (inst.resolved) return;
+                inst.resolved = true;
+                if (inst.pollId) { clearTimeout(inst.pollId); inst.pollId = null; }
                 if (inst.timeoutId) { clearTimeout(inst.timeoutId); inst.timeoutId = null; }
                 this.log(id, 'success', `Destino: ${url.substring(0, 70)}`);
                 this.stats.successCount++; this.stats.totalRuns++;
+                this._recordSuccess(link);
                 inst.status = 'view'; inst.phase = null; this._broadcastStatus();
+
                 inst.timeoutId = setTimeout(() => {
                     if (this.running && !win.isDestroyed()) this._runCycle(id, config, win, sess, currentProxy);
                 }, scheduler.getViewTime());
@@ -260,30 +370,41 @@ class FarmEngine {
             }
 
             if (Date.now() - startTime > TIMEOUT_MS) {
-                resolved = true;
-                if (inst.pollId) { clearInterval(inst.pollId); inst.pollId = null; }
+                if (inst.resolved) return;
+                inst.resolved = true;
+                if (inst.pollId) { clearTimeout(inst.pollId); inst.pollId = null; }
                 if (inst.timeoutId) { clearTimeout(inst.timeoutId); inst.timeoutId = null; }
                 this.log(id, 'error', 'Timeout 45s. Pulando...');
-                this.stats.failCount++; inst.phase = null; this._broadcastStatus();
+                this.stats.failCount++;
+                this._recordFail(link);
+                inst.phase = null; this._broadcastStatus();
                 inst.timeoutId = setTimeout(() => {
                     if (this.running && !win.isDestroyed()) this._runCycle(id, config, win, sess, currentProxy, true);
                 }, scheduler.getNextDelay());
+                return;
             }
-        }, 2000);
+
+            inst.pollId = setTimeout(doPoll, 2000);
+        };
+
+        inst.pollId = setTimeout(doPoll, 2000);
 
         inst.timeoutId = setTimeout(async () => {
-            if (resolved || !this.running || win.isDestroyed()) return;
-            resolved = true;
-            if (inst.pollId) { clearInterval(inst.pollId); inst.pollId = null; }
+            if (inst.resolved || !this.running || win.isDestroyed()) return;
+            inst.resolved = true;
+            if (inst.pollId) { clearTimeout(inst.pollId); inst.pollId = null; }
             const url = await this._readCurrentUrl(win);
             if (url && !isSupportedHost(url) && url !== 'about:blank') {
                 this.log(id, 'success', `Destino (late): ${url.substring(0, 70)}`);
                 this.stats.successCount++; this.stats.totalRuns++;
+                this._recordSuccess(link);
                 inst.status = 'view'; inst.phase = null; this._broadcastStatus();
                 setTimeout(() => { if (this.running && !win.isDestroyed()) this._runCycle(id, config, win, sess, currentProxy); }, scheduler.getViewTime());
             } else {
                 this.log(id, 'error', 'Timeout final. Próximo...');
-                this.stats.failCount++; inst.phase = null; this._broadcastStatus();
+                this.stats.failCount++;
+                this._recordFail(link);
+                inst.phase = null; this._broadcastStatus();
                 this._runCycle(id, config, win, sess, currentProxy, true);
             }
         }, TIMEOUT_MS + 3000);
@@ -291,12 +412,17 @@ class FarmEngine {
 
     async stopAll() {
         this.running = false;
-        this.proxyManager.stopScanner();
+        // this.proxyManager.stopScanner(); // nao prescisa mais parar!!
+        if (this.healthCheckInterval) {
+            clearInterval(this.healthCheckInterval);
+            this.healthCheckInterval = null;
+        }
         this.log('MAIN', 'info', 'Parando...');
+        this._sendWebhook('⏹ **Farm Parado**');
         for (const [id, inst] of this.instances) {
             if (inst.timeoutId) clearTimeout(inst.timeoutId);
-            if (inst.pollId) clearInterval(inst.pollId);
-            try { if (inst.window && !inst.window.isDestroyed()) inst.window.close(); } catch (e) {}
+            if (inst.pollId) clearTimeout(inst.pollId);
+            try { if (inst.window && !inst.window.isDestroyed()) inst.window.close(); } catch (e) { }
         }
         this.instances.clear(); this._broadcastStatus();
         return { ok: true };

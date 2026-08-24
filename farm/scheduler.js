@@ -1,76 +1,89 @@
+
 const { randomInt } = require('./fingerprint');
 
 class Scheduler {
-    constructor(config) {
-        this.config = config || {};
+    constructor(config, configStore) {
+        this.config = config;
+        this.configStore = configStore;
     }
 
-    isPeakHour() {
-        const now = new Date();
-        const current = now.getHours() * 60 + now.getMinutes();
-        const peaks = this.config.peakHours || [];
-        for (const peak of peaks) {
-            const [sh, sm] = (peak.start || '00:00').split(':').map(Number);
-            const [eh, em] = (peak.end || '00:00').split(':').map(Number);
-            const start = sh * 60 + sm;
-            const end = eh * 60 + em;
-            if (current >= start && current <= end) return true;
+    pickNextLink(links) {
+        if (!links || links.length === 0) return '';
+        if (links.length === 1) {
+            const first = links[0];
+            return typeof first === 'string' ? first : first.url;
         }
-        return false;
-    }
 
-    getTimeWeight() {
-        const peaks = this.config.peakHours || [];
-        if (peaks.length === 0) return 1.0;
-        return this.isPeakHour() ? 0.7 : 1.3;
-    }
-
-    pickNextLink(links, tierList) {
-        if (!links || links.length === 0) return null;
-        if (!tierList || tierList.length === 0) {
-            return links[randomInt(0, links.length - 1)];
-        }
-        // Mapeia links para pesos baseados em tierList
-        const weighted = links.map(link => {
-            // Encontra tier que matcha o link (ou wildcard *)
-            const tier = tierList.find(t => {
-                if (!t.url) return false;
-                if (t.url === '*') return true;
-                return link.includes(t.url);
-            });
-            const weight = tier ? (parseFloat(tier.weight) || 1.0) : 1.0;
-            return { link, weight };
+        // Filtra links em cooldown ou na blacklist
+        const now = Date.now();
+        const blacklist = this.configStore ? this.configStore.get('pausedLinks', {}) : {};
+        const lastUsed = this.configStore ? this.configStore.get('linkLastUsed', {}) : {};
+        const cooldownCfg = this.config.linkCooldown || { enabled: true, minutes: 10 };
+        const blacklistCfg = this.config.blacklist || { enabled: true, maxFails: 5, cooldownMinutes: 30 };
+        
+        const available = links.filter(l => {
+            const url = typeof l === 'string' ? l : l.url;
+            
+            // Check blacklist
+            if (blacklistCfg.enabled && blacklist[url]) {
+                const paused = blacklist[url];
+                const resumeAt = paused.pausedAt + (blacklistCfg.cooldownMinutes * 60 * 1000);
+                if (now < resumeAt) return false;
+            }
+            
+            // Check cooldown
+            if (cooldownCfg.enabled && lastUsed[url]) {
+                const nextUse = lastUsed[url] + (cooldownCfg.minutes * 60 * 1000);
+                if (now < nextUse) return false;
+            }
+            
+            return true;
         });
-        const totalWeight = weighted.reduce((s, w) => s + w.weight, 0);
+
+        // Se todos estão em cooldown/blacklist, ignora filtros e pega qualquer um
+        const pool = available.length > 0 ? available : links;
+
+        const weights = pool.map(l => typeof l === 'object' ? (l.weight || 1) : 1);
+        const totalWeight = weights.reduce((a, b) => a + b, 0);
+        
         let random = Math.random() * totalWeight;
-        for (const item of weighted) {
-            random -= item.weight;
-            if (random <= 0) return item.link;
+        for (let i = 0; i < pool.length; i++) {
+            random -= weights[i];
+            if (random <= 0) {
+                const link = pool[i];
+                return typeof link === 'string' ? link : link.url;
+            }
         }
-        return weighted[weighted.length - 1].link;
+        const last = pool[pool.length - 1];
+        return typeof last === 'string' ? last : last.url;
     }
 
     getNextDelay() {
-        const min = parseInt(this.config.minDelay, 10) || 3000;
-        const max = parseInt(this.config.maxDelay, 10) || 12000;
-        const weight = this.getTimeWeight();
-        const base = randomInt(min, max);
-        return Math.max(1000, Math.round(base * weight));
+        const min = this.config.minDelay || 5000;
+        const max = this.config.maxDelay || 15000;
+        const peakHours = this.config.peakHours || Array(24).fill(50);
+        const hour = new Date().getHours();
+        const intensity = peakHours[hour] || 50;
+        const factor = 1 - (intensity / 100);
+        const delay = min + (max - min) * factor;
+        return Math.round(delay + randomInt(-500, 500));
     }
 
     getViewTime() {
-        const base = parseInt(this.config.viewTime, 10) || 4000;
-        const variance = randomInt(-1000, 2000);
-        return Math.max(2000, base + variance);
+        return (this.config.viewTime || 4000) + randomInt(-500, 1000);
     }
 
-    shouldTakeBreak(cycleCount) {
-        const threshold = randomInt(8, 15);
-        return cycleCount > 0 && cycleCount % threshold === 0;
+    shouldTakeBreak(cycle) {
+        return cycle > 0 && cycle % randomInt(8, 15) === 0;
     }
 
     getBreakDuration() {
-        return randomInt(30000, 120000);
+        const peakHours = this.config.peakHours || Array(24).fill(50);
+        const hour = new Date().getHours();
+        const intensity = peakHours[hour] || 50;
+        return intensity > 70 ? randomInt(3000, 8000) :
+               intensity > 40 ? randomInt(8000, 15000) :
+               randomInt(15000, 30000);
     }
 }
 

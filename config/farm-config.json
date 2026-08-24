@@ -25,7 +25,7 @@
       "tier": 1
     }
   ],
-  "instances": 2,
+  "instances": 6,
   "minDelay": 5000,
   "maxDelay": 15000,
   "viewTime": 4000,

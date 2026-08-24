@@ -1,5 +1,5 @@
 {
-  "name": "aincrad-farm",
+  "name": "gs-farm",
   "version": "1.0.0",
   "description": "Auto-farm local para links encurtados com bypass, proxies e humanização",
   "main": "main.js",
@@ -16,8 +16,8 @@
     "node-fetch": "^2.7.0"
   },
   "build": {
-    "appId": "com.rorax.aincrad-farm",
-    "productName": "Aincrad Farm",
+    "appId": "com.rorax.gs-farm",
+    "productName": "GS Farm",
     "directories": {
       "output": "dist"
     },
