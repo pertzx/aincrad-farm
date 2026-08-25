@@ -20,7 +20,6 @@
     const STYLE_ID = "gs-bypass-style";
     const STATE_KEY = "gs_bypass_state_v6";
     const CLICK_DELAY = 5000;
-    const AD_DELAY = 10000;
     const HOST = location.hostname.toLowerCase();
 
     const SUPPORTED_ROOTS = [
@@ -377,6 +376,32 @@
         }
     }
 
+    // ===== FUNCOES DE DETECAO DE FASE POR TEXTO NA PAGINA =====
+    function detectPhaseFromPageText() {
+        var bodyText = document.body ? document.body.innerText : '';
+        var match = bodyText.match(/(\d+)\s*[/\-]\s*(\d+)/);
+        if (match) {
+            return { current: parseInt(match[1], 10), total: parseInt(match[2], 10), text: match[0] };
+        }
+        var allElements = document.querySelectorAll('*');
+        for (var i = 0; i < Math.min(allElements.length, 200); i++) {
+            var el = allElements[i];
+            var text = el.innerText || el.textContent || '';
+            var m = text.match(/(\d+)\s*[/\-]\s*(\d+)/);
+            if (m) {
+                var style = window.getComputedStyle(el);
+                var isProminent = parseFloat(style.fontSize) >= 14 || 
+                                    style.fontWeight === 'bold' || 
+                                    parseInt(style.zIndex) > 0 ||
+                                    el.tagName === 'H1' || el.tagName === 'H2' || el.tagName === 'H3';
+                if (isProminent || i < 50) {
+                    return { current: parseInt(m[1], 10), total: parseInt(m[2], 10), text: m[0] };
+                }
+            }
+        }
+        return null;
+    }
+
     // ===== FUNCOES DE IFRAME DO ANUNCIO =====
     const AD_HELP_KEYWORDS = [
         'about', 'sobre', 'info', 'informa', 'privacy', 'privacidade', 'policy', 'politica',
@@ -431,30 +456,6 @@
             }
         } catch (e) {
             console.log('[GS] iframe cross-origin, nao conseguiu acessar DOM interno: ' + e.message);
-        }
-        if (buttons.length === 0) {
-            console.log('[GS] Usando elementFromPoint no iframe');
-            var cols = 3; var rows = 3;
-            for (var r = 0; r < rows; r++) {
-                for (var c = 0; c < cols; c++) {
-                    var px = iframeRect.left + (iframeRect.width * (c + 0.5) / cols);
-                    var py = iframeRect.top + (iframeRect.height * (r + 0.5) / rows);
-                    var elAt = document.elementFromPoint(px, py);
-                    if (elAt && elAt !== document.body && elAt !== iframe) {
-                        var approxRect = elAt.getBoundingClientRect();
-                        if (approxRect.width > 50 || approxRect.height > 50 ||
-                            (px > iframeRect.left + 20 && px < iframeRect.right - 20 &&
-                             py > iframeRect.top + 20 && py < iframeRect.bottom - 20)) {
-                            buttons.push({
-                                text: (elAt.innerText || elAt.getAttribute('aria-label') || '').trim(),
-                                x: Math.round(px), y: Math.round(py),
-                                width: Math.round(approxRect.width), height: Math.round(approxRect.height),
-                                fromDOM: false
-                            });
-                        }
-                    }
-                }
-            }
         }
         return buttons;
     }
@@ -548,6 +549,83 @@
         try { el.classList.remove('gs-ad-highlight'); } catch (e) {}
     }
 
+    // NOVO: Gera coordenadas de clique no anuncio (sem depender de botoes)
+    function generateAdClickCoordinates() {
+        var coords = [];
+
+        var iframes = document.querySelectorAll('iframe');
+        for (var i = 0; i < iframes.length; i++) {
+            var iframe = iframes[i];
+            var rect = iframe.getBoundingClientRect();
+            if (rect.width < 50 || rect.height < 50) continue;
+
+            var src = (iframe.src || '').toLowerCase();
+            var parent = iframe.parentElement;
+            var parentCls = parent ? (parent.className || '').toLowerCase() : '';
+            var isAd = src.indexOf('google') !== -1 || 
+                       src.indexOf('doubleclick') !== -1 || 
+                       src.indexOf('ads') !== -1 ||
+                       parentCls.indexOf('ad') !== -1 ||
+                       parentCls.indexOf('ads') !== -1;
+
+            if (isAd || rect.width > 200 || rect.height > 100) {
+                coords.push({
+                    x: Math.round(rect.left + rect.width / 2),
+                    y: Math.round(rect.top + rect.height / 2),
+                    label: 'iframe-center',
+                    source: 'iframe'
+                });
+                var cols = 3, rows = 2;
+                for (var r = 0; r < rows; r++) {
+                    for (var c = 0; c < cols; c++) {
+                        coords.push({
+                            x: Math.round(rect.left + rect.width * (c + 0.5) / cols),
+                            y: Math.round(rect.top + rect.height * (r + 0.5) / rows),
+                            label: 'iframe-grid-' + r + '-' + c,
+                            source: 'iframe-grid'
+                        });
+                    }
+                }
+            }
+        }
+
+        var adSelectors = [
+            '.ad-container', '[class*="ad"]', '[id*="ad"]',
+            '.adsbygoogle', '.advertisement', '.banner',
+            '[data-ad-slot]', '[data-ad-client]'
+        ];
+        for (var s = 0; s < adSelectors.length; s++) {
+            var els = document.querySelectorAll(adSelectors[s]);
+            for (var i = 0; i < els.length; i++) {
+                var el = els[i];
+                var rect = el.getBoundingClientRect();
+                if (rect.width < 30 || rect.height < 30) continue;
+                coords.push({
+                    x: Math.round(rect.left + rect.width / 2),
+                    y: Math.round(rect.top + rect.height / 2),
+                    label: 'ad-container-center',
+                    source: 'ad-container'
+                });
+            }
+        }
+
+        var w = window.innerWidth;
+        var h = window.innerHeight;
+
+        coords.push({ x: Math.round(w / 2), y: Math.round(h / 2), label: 'screen-center', source: 'generic' });
+        coords.push({ x: Math.round(w / 2), y: Math.round(h * 0.15), label: 'top-center', source: 'generic' });
+        coords.push({ x: Math.round(w * 0.25), y: Math.round(h * 0.15), label: 'top-left', source: 'generic' });
+        coords.push({ x: Math.round(w * 0.75), y: Math.round(h * 0.15), label: 'top-right', source: 'generic' });
+        coords.push({ x: Math.round(w / 2), y: Math.round(h * 0.4), label: 'mid-center', source: 'generic' });
+        coords.push({ x: Math.round(w * 0.3), y: Math.round(h * 0.4), label: 'mid-left', source: 'generic' });
+        coords.push({ x: Math.round(w * 0.7), y: Math.round(h * 0.4), label: 'mid-right', source: 'generic' });
+        coords.push({ x: Math.round(w / 2), y: Math.round(h * 0.7), label: 'lower-center', source: 'generic' });
+        coords.push({ x: Math.round(w * 0.3), y: Math.round(h * 0.7), label: 'lower-left', source: 'generic' });
+        coords.push({ x: Math.round(w * 0.7), y: Math.round(h * 0.7), label: 'lower-right', source: 'generic' });
+
+        return coords;
+    }
+
     function scanAndReportAdButtons(adEl) {
         if (!adEl) {
             if (window.__GS_REPORT_AD_BUTTONS__) window.__GS_REPORT_AD_BUTTONS__([]);
@@ -583,7 +661,7 @@
     // ===== CONTAGEM REGRESSIVA =====
     function countdown(seconds, label, onTick, onDone) {
         var remaining = seconds;
-        addFeedback('<span class="warn">⏳ ' + label + ' ' + remaining + 's</span>');
+        addFeedback('<span class="warn">\u23F3 ' + label + ' ' + remaining + 's</span>');
         var timer = setInterval(function () {
             remaining--;
             if (remaining > 0) {
@@ -746,7 +824,7 @@
         element.id = OVERLAY_ID;
         element.innerHTML = `
             <div id="gs-bypass-box">
-                <button id="gs-close" type="button" aria-label="Fechar">✕</button>
+                <button id="gs-close" type="button" aria-label="Fechar">\u2715</button>
                 <div id="gs-logo-wrap">
                     <div id="gs-logo"><img src="${LOGO_URL}" id="gs-logo-image" alt=""></div>
                     <div><div id="gs-title">GS Bypass</div><div id="gs-subtitle">RORAX Edition</div></div>
@@ -761,7 +839,7 @@
                 <label id="gs-input-label">Access Key</label>
                 <div id="gs-input-wrapper">
                     <input id="gs-input" type="password" placeholder="Enter key to unlock">
-                    <button id="gs-eye" type="button">👁</button>
+                    <button id="gs-eye" type="button">\uD83D\uDC41</button>
                 </div>
                 <div id="gs-error"></div>
                 <button id="gs-unlock-button" type="button">Iniciar Bypass</button>
@@ -876,7 +954,7 @@
         if (logoImage) {
             logoImage.onerror = function () {
                 if (logoContainer) {
-                    logoContainer.innerHTML = '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#1a0a0a;font-size:24px;">⚔️</div>';
+                    logoContainer.innerHTML = '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#1a0a0a;font-size:24px;">\u2694\uFE0F</div>';
                 }
             };
         }
@@ -893,7 +971,7 @@
             eyeButton.onclick = function () {
                 if (!input) return;
                 input.type = input.type === "password" ? "text" : "password";
-                eyeButton.textContent = input.type === "password" ? "👁" : "🙈";
+                eyeButton.textContent = input.type === "password" ? "\uD83D\uDC41" : "\uD83D\uDE48";
             };
         }
         if (input) {
@@ -952,17 +1030,18 @@
 
     // ===== INTERACAO COM A PAGINA =====
     // MODIFICADO: Delega clique no anuncio para o Electron via coordenadas
+    // Nao detecta mais botoes — so reporta coordenadas para o Electron clicar
     function interactWithPage(callback) {
         var buttons = scanButtons();
 
         if (buttons.length === 0) {
-            addFeedback('<span class="warn">⚠ Nenhum botao de avanco encontrado</span>');
+            addFeedback('<span class="warn">\u26A0 Nenhum botao de avanco encontrado</span>');
             if (callback) callback(false);
             return false;
         }
 
         var best = buttons[0];
-        addFeedback('<span class="ok">✓ Botao: "' + best.text.substring(0, 30) + '" [deobf: ' + best.deobf + '] (score ' + best.pct + '%)</span>');
+        addFeedback('<span class="ok">\u2713 Botao: "' + best.text.substring(0, 30) + '" [deobf: ' + best.deobf + '] (score ' + best.pct + '%)</span>');
 
         var maxCycles = 4;
         var cycle = 0;
@@ -971,7 +1050,7 @@
             if (manuallyClosed) { if (callback) callback(false); return; }
             cycle++;
             if (cycle > maxCycles) {
-                addFeedback('<span class="err">✗ Maximo de ' + maxCycles + ' ciclos atingido</span>');
+                addFeedback('<span class="err">\u2717 Maximo de ' + maxCycles + ' ciclos atingido</span>');
                 if (callback) callback(false);
                 return;
             }
@@ -982,31 +1061,43 @@
             var ad = findNearestAd(target.el);
 
             if (ad) {
-                addFeedback('<span class="warn">🎯 Ciclo #' + cycle + ' — Anuncio encontrado, escaneando botoes...</span>');
-                // NOVO: Reporta botoes para o Electron e espera resposta
+                addFeedback('<span class="warn">\uD83C\uDFAF Ciclo #' + cycle + ' — Anuncio encontrado, reportando coordenadas...</span>');
+                // NOVO: Reporta coordenadas para o Electron clicar
+                var coords = generateAdClickCoordinates();
+                if (coords.length > 0) {
+                    addFeedback('<span class="ok">\u2713 ' + coords.length + ' coordenadas geradas para clique</span>');
+                    if (window.__GS_REPORT_AD_COORDS__) {
+                        window.__GS_REPORT_AD_COORDS__(coords);
+                    }
+                }
                 scanAndReportAdButtons(ad);
+
+                // Aguarda o Electron processar o clique
                 var adClickResolved = false;
-                var originalReportDone = window.__GS_REPORT_AD_CLICK_DONE__;
-                window.__GS_REPORT_AD_CLICK_DONE__ = function(success) {
-                    window.__GS_REPORT_AD_CLICK_DONE__ = originalReportDone;
-                    if (adClickResolved) return;
-                    adClickResolved = true;
-                    if (success) {
-                        addFeedback('<span class="ok">✓ Anuncio clicado pelo Electron!</span>');
-                        countdown(5, 'Esperando pro botao desbloquear...', function (sec) {
-                            addFeedback('<span class="warn">⏳ Esperando pro botao desbloquear... ' + sec + 's</span>');
-                        }, function () {
-                            tryButtonClick(target, function (worked) {
-                                if (worked) {
-                                    if (callback) callback(true);
-                                } else {
-                                    addFeedback('<span class="warn">⚠ Botao ainda travado, repetindo ciclo...</span>');
-                                    setTimeout(runCycle, 1000);
-                                }
-                            });
-                        });
-                    } else {
-                        addFeedback('<span class="warn">⚠ Anuncio nao abriu — tentando botao direto</span>');
+                var checkInterval = setInterval(function() {
+                    if (adClickResolved || manuallyClosed) {
+                        clearInterval(checkInterval);
+                        return;
+                    }
+                    // Verifica se URL mudou (sinal de que o Electron clicou e funcionou)
+                    var currentUrl = location.href;
+                    var destHost = '';
+                    try { destHost = new URL(currentUrl).hostname.toLowerCase(); } catch(e) {}
+                    if (!isSupportedHost(destHost) && currentUrl !== 'about:blank') {
+                        adClickResolved = true;
+                        clearInterval(checkInterval);
+                        addFeedback('<span class="ok">\u2713 Anuncio clicado com sucesso pelo Electron!</span>');
+                        if (callback) callback(true);
+                        return;
+                    }
+                }, 1000);
+
+                // Timeout de seguranca
+                setTimeout(function() {
+                    if (!adClickResolved) {
+                        clearInterval(checkInterval);
+                        adClickResolved = true;
+                        addFeedback('<span class="warn">\u26A0 Anuncio nao abriu — tentando botao direto</span>');
                         tryButtonClick(target, function (worked) {
                             if (worked) {
                                 if (callback) callback(true);
@@ -1015,9 +1106,9 @@
                             }
                         });
                     }
-                };
+                }, 8000);
             } else {
-                addFeedback('<span class="warn">⚠ Sem anuncio proximo — tentando botao direto</span>');
+                addFeedback('<span class="warn">\u26A0 Sem anuncio proximo — tentando botao direto</span>');
                 tryButtonClick(target, function (worked) {
                     if (worked) {
                         if (callback) callback(true);
@@ -1036,10 +1127,10 @@
         updateStatus('Clicando em botao de avanco...');
         smartClick(target, function (urlChanged) {
             if (urlChanged) {
-                addFeedback('<span class="ok">✓ Botao funcionou!</span>');
+                addFeedback('<span class="ok">\u2713 Botao funcionou!</span>');
                 if (callback) callback(true);
             } else {
-                addFeedback('<span class="warn">⚠ Clique no botao nao gerou navegacao</span>');
+                addFeedback('<span class="warn">\u26A0 Clique no botao nao gerou navegacao</span>');
                 if (callback) callback(false);
             }
         });
@@ -1057,7 +1148,7 @@
             typeof session.stageId !== "number" || typeof session.stageNumber !== "number" ||
             typeof session.totalStage !== "number" || session.totalStage < 1) {
             updateStatus("Sessao invalida");
-            addFeedback('<span class="err">✗ Sessao invalida</span>');
+            addFeedback('<span class="err">\u2717 Sessao invalida</span>');
             console.error("[GS] Sessao invalida:", session);
             startedThisPage = false;
             return;
@@ -1083,7 +1174,7 @@
 
             const visibleStage = Math.min(progress, totalStages);
             updateStage(visibleStage, totalStages);
-            addFeedback('▶ Chamando API (fase ' + visibleStage + '/' + totalStages + ')');
+            addFeedback('\u25B6 Chamando API (fase ' + visibleStage + '/' + totalStages + ')');
 
             callNextStage(token, stageId, progress, function (destination) {
                 if (manuallyClosed) return;
@@ -1097,17 +1188,20 @@
                 });
 
                 if (typeof destination === "string" && /^https?:\/\//i.test(destination)) {
-                    addFeedback('<span class="ok">✓ API retornou link</span>');
+                    addFeedback('<span class="ok">\u2713 API retornou link</span>');
 
                     try {
                         const destHost = new URL(destination).hostname.toLowerCase();
                         if (!isSupportedHost(destHost)) {
-                            addFeedback('<span class="ok">✓ Link final detectado!</span>');
+                            addFeedback('<span class="ok">\u2713 Link final detectado!</span>');
+                            // NOVO: Guarda URL final no state
+                            setState({ finalUrl: destination, completed: true });
+                            redirectToFinalUrl(destination);
                             return;
                         }
                     } catch (e) { }
 
-                    addFeedback('↻ Redirecionando para proxima fase...');
+                    addFeedback('\u21BB Redirecionando para proxima fase...');
                     var waitTime = clicked ? CLICK_DELAY + 1000 : 1000;
                     setTimeout(function () {
                         location.replace(destination);
@@ -1121,27 +1215,27 @@
                         if (manuallyClosed) return;
 
                         if (!clicked) {
-                            addFeedback('<span class="err">✗ API nao retornou link e botao nao funcionou</span>');
+                            addFeedback('<span class="err">\u2717 API nao retornou link e botao nao funcionou</span>');
                             updateStatus("API sem resposta — tentando fallback...");
 
                             setTimeout(function () {
                                 if (manuallyClosed) return;
                                 interactWithPage(function (retryOk) {
                                     if (!retryOk) {
-                                        addFeedback('<span class="err">✗ Fallback falhou</span>');
+                                        addFeedback('<span class="err">\u2717 Fallback falhou</span>');
                                     }
                                 });
                             }, 1500);
 
                             if (progress < totalStages + 1) {
                                 progress++;
-                                addFeedback('⏳ Aguardando ' + (CLICK_DELAY / 1000) + 's antes da proxima fase...');
+                                addFeedback('\u23F3 Aguardando ' + (CLICK_DELAY / 1000) + 's antes da proxima fase...');
                                 setTimeout(next, CLICK_DELAY);
                             }
                         } else {
                             if (progress < totalStages + 1) {
                                 progress++;
-                                addFeedback('⏳ Aguardando ' + (CLICK_DELAY / 1000) + 's antes da proxima fase...');
+                                addFeedback('\u23F3 Aguardando ' + (CLICK_DELAY / 1000) + 's antes da proxima fase...');
                                 setTimeout(next, CLICK_DELAY);
                             }
                         }
@@ -1152,7 +1246,7 @@
                     clearInterval(fallbackTimer);
                     if (!interactionDone && !manuallyClosed && progress < totalStages + 1) {
                         progress++;
-                        addFeedback('⏳ Safety: aguardando ' + (CLICK_DELAY / 1000) + 's...');
+                        addFeedback('\u23F3 Safety: aguardando ' + (CLICK_DELAY / 1000) + 's...');
                         setTimeout(next, CLICK_DELAY);
                     }
                 }, 35000);
@@ -1161,7 +1255,7 @@
 
                 if (progress < totalStages + 1) {
                     progress++;
-                    addFeedback('⏳ Aguardando ' + (CLICK_DELAY / 1000) + 's antes da proxima fase...');
+                    addFeedback('\u23F3 Aguardando ' + (CLICK_DELAY / 1000) + 's antes da proxima fase...');
                     setTimeout(next, CLICK_DELAY);
                     return;
                 }
@@ -1169,7 +1263,7 @@
                 bypassRunning = false; startedThisPage = false;
                 setState({ active: false, running: false, currentStage: null, totalStages: null, status: "Nao foi possivel concluir" });
                 showIdleUI();
-                addFeedback('<span class="err">✗ Nao foi possivel concluir</span>');
+                addFeedback('<span class="err">\u2717 Nao foi possivel concluir</span>');
                 if (errorElement) errorElement.textContent = "Nao foi possivel concluir.";
             });
         }
@@ -1194,8 +1288,6 @@
         runBypass();
     }
 
-    startNewBypass();
-
     function autoResume() {
         if (manuallyClosed || startedThisPage) return;
         const state = getState();
@@ -1217,7 +1309,7 @@
         if (statusElement) statusElement.textContent = "Abrindo destino...";
         const progressBar = overlay?.querySelector("#gs-stage-progress-bar");
         if (progressBar) { progressBar.style.width = "100%"; progressBar.style.background = "#22c55e"; }
-        addFeedback('<span class="ok">✓ DESTINO: ' + url.substring(0, 50) + '...</span>');
+        addFeedback('<span class="ok">\u2713 DESTINO: ' + url.substring(0, 50) + '...</span>');
         console.log("[GS] DESTINO:", url);
         notifyDestino(url);
         setTimeout(function () { location.replace(url); }, 800);
@@ -1247,7 +1339,7 @@
         ensureStyle(); ensureOverlay(); startObserver(); startWatchdog();
         setTimeout(function () { ensureOverlay(); autoResume(); }, 300);
         setTimeout(function () { autoResume(); }, 1200);
-        console.log("[GS] v6 + Motor v5 (Electron native click) ativo em:", location.origin);
+        console.log("[GS] v6 + Motor v6 (URL final + coordenadas) ativo em:", location.origin);
     }
 
     if (document.documentElement) { initialize(); }
