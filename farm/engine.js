@@ -83,11 +83,9 @@ class FarmEngine {
         this.configStore.set('dailyStats', daily);
         this.configStore.set('totalSuccess', this.configStore.get('totalSuccess', 0) + 1);
 
-        // Reset fail count on success
         const bl = this.configStore.get('pausedLinks', {});
         if (bl[link]) { delete bl[link]; this.configStore.set('pausedLinks', bl); }
 
-        // Record last used
         const lu = this.configStore.get('linkLastUsed', {});
         lu[link] = Date.now();
         this.configStore.set('linkLastUsed', lu);
@@ -106,7 +104,6 @@ class FarmEngine {
         this.configStore.set('dailyStats', daily);
         this.configStore.set('totalFail', this.configStore.get('totalFail', 0) + 1);
 
-        // Blacklist check
         const blacklistCfg = this.configStore.get('blacklist', { enabled: true, maxFails: 5, cooldownMinutes: 30 });
         if (blacklistCfg.enabled) {
             const bl = this.configStore.get('pausedLinks', {});
@@ -129,22 +126,22 @@ class FarmEngine {
         const todaySuccess = (daily[today] && daily[today].success) || 0;
         const earned = todaySuccess * perBypass;
         if (earned >= goal.amount) {
-            this.log('MAIN', 'success', `🎉 Meta diária de R$ ${goal.amount.toFixed(2)} batida!`);
-            this._sendWebhook(`🎉 **Meta Diária Atingida!**\nGanhos: R$ ${earned.toFixed(2)} / R$ ${goal.amount.toFixed(2)}`);
+            this.log('MAIN', 'success', `🎉 Meta diaria de R$ ${goal.amount.toFixed(2)} batida!`);
+            this._sendWebhook(`🎉 **Meta Diaria Atingida!**\nGanhos: R$ ${earned.toFixed(2)} / R$ ${goal.amount.toFixed(2)}`);
             return true;
         }
         return false;
     }
 
     async start(config) {
-        if (this.running) return { ok: false, error: 'Já está rodando' };
-        if (this._checkGoal()) return { ok: false, error: 'Meta diária já foi batida!' };
+        if (this.running) return { ok: false, error: 'Ja esta rodando' };
+        if (this._checkGoal()) return { ok: false, error: 'Meta diaria ja foi batida!' };
 
         this.running = true;
         this.stats.startTime = Date.now();
         const count = Math.min(Math.max(1, config.instances || 1), 10);
-        this.log('MAIN', 'info', `Iniciando farm com ${count} instância(s)...`);
-        this._sendWebhook(`🚀 **Farm Iniciado**\nInstâncias: ${count}\nLinks: ${(config.links || []).length}`);
+        this.log('MAIN', 'info', `Iniciando farm com ${count} instancia(s)...`);
+        this._sendWebhook(`🚀 **Farm Iniciado**\nInstancias: ${count}\nLinks: ${(config.links || []).length}`);
 
         if (config.useProxies !== false) {
             this.proxyManager.startScanner();
@@ -152,17 +149,15 @@ class FarmEngine {
             if (existing.length > 0) {
                 this.log('MAIN', 'info', `${existing.length} proxies no cache`);
             } else {
-                this.log('MAIN', 'warn', 'Nenhum proxy ainda — usando IP direto até carregar');
+                this.log('MAIN', 'warn', 'Nenhum proxy ainda — usando IP direto ate carregar');
             }
             this._broadcast('proxy:updated', existing);
         }
 
-        // No start(), em vez de setInterval simples:
         this.healthCheckInterval = setInterval(async () => {
             if (!this.running) return;
-            // Faz health check em streaming também
             await this.proxyManager.healthCheckAll();
-        }, 300000); // 5 min
+        }, 300000);
 
         for (let i = 0; i < count; i++) {
             await this._spawnInstance(i, config);
@@ -194,7 +189,7 @@ class FarmEngine {
                 proxy = null;
             }
         } else if (config.useProxies !== false) {
-            this.log(id, 'info', 'Sem proxy disponível — usando IP direto');
+            this.log(id, 'info', 'Sem proxy disponivel — usando IP direto');
         }
 
         if (config.clearStorage !== false) {
@@ -222,7 +217,8 @@ class FarmEngine {
         this.instances.set(id, {
             window: win, session: sess, fingerprint: fp, status: 'starting',
             cycle: 0, phase: null, currentLink: null, proxy: proxy,
-            timeoutId: null, pollId: null, resolved: false
+            timeoutId: null, pollId: null, resolved: false,
+            adClickPending: false, adClickButtons: [], adClickIndex: 0
         });
         this._broadcastStatus();
 
@@ -239,7 +235,7 @@ class FarmEngine {
 
     async _injectBypass(win) {
         try { await win.webContents.executeJavaScript(BYPASS_SCRIPT); }
-        catch (e) { this.log(null, 'warn', 'Falha injeção: ' + e.message); }
+        catch (e) { this.log(null, 'warn', 'Falha injecao: ' + e.message); }
     }
 
     async _readBypassState(win) {
@@ -252,6 +248,117 @@ class FarmEngine {
 
     async _readCurrentUrl(win) {
         try { return win.webContents.getURL(); } catch (e) { return ''; }
+    }
+
+    // ============================================================
+    // NOVO: CLICA EM BOTOES DO ANUNCIO VIA sendInputEvent (clique real do SO)
+    // ============================================================
+    async _clickAdButtonsNative(win, buttons) {
+        if (!buttons || buttons.length === 0) return false;
+        const wc = win.webContents;
+
+        for (let i = 0; i < buttons.length; i++) {
+            const btn = buttons[i];
+            this.log(null, 'info', `Clicando anuncio botao #${i+1} (${btn.x},${btn.y}) "${btn.text?.substring(0,20) || ''}"`);
+
+            try {
+                // Move o mouse para a posicao
+                wc.sendInputEvent({
+                    type: 'mouseMove',
+                    x: btn.x,
+                    y: btn.y
+                });
+                await this._sleep(100);
+
+                // Mouse down
+                wc.sendInputEvent({
+                    type: 'mouseDown',
+                    x: btn.x,
+                    y: btn.y,
+                    button: 'left',
+                    clickCount: 1
+                });
+                await this._sleep(80);
+
+                // Mouse up
+                wc.sendInputEvent({
+                    type: 'mouseUp',
+                    x: btn.x,
+                    y: btn.y,
+                    button: 'left',
+                    clickCount: 1
+                });
+                await this._sleep(200);
+
+                // Tambem tenta click direto (alguns ads respondem melhor)
+                wc.sendInputEvent({
+                    type: 'mouseDown',
+                    x: btn.x,
+                    y: btn.y,
+                    button: 'left',
+                    clickCount: 1
+                });
+                await this._sleep(50);
+                wc.sendInputEvent({
+                    type: 'mouseUp',
+                    x: btn.x,
+                    y: btn.y,
+                    button: 'left',
+                    clickCount: 1
+                });
+
+                // Espera um pouco pra ver se abriu nova aba/janela
+                await this._sleep(800);
+
+                // Verifica se abriu nova janela (novas abas/janelas do anuncio)
+                const allWindows = BrowserWindow.getAllWindows();
+                // Se tem mais janelas do que instancias farm, provavelmente abriu anuncio
+                // Ou se a URL mudou
+                const currentUrl = wc.getURL();
+                if (!isSupportedHost(currentUrl) && currentUrl !== 'about:blank') {
+                    this.log(null, 'success', `Anuncio abriu nova pagina: ${currentUrl.substring(0,50)}`);
+                    return true;
+                }
+
+                // Verifica se apareceu nova janela (popup do anuncio)
+                // Nota: isso eh aproximado, pois novas janelas podem ser de outros processos
+            } catch (e) {
+                this.log(null, 'warn', `Erro no clique nativo #${i+1}: ${e.message}`);
+            }
+
+            // Espera entre tentativas
+            await this._sleep(600);
+        }
+
+        return false;
+    }
+
+    // ============================================================
+    // NOVO: Configura listeners para receber coordenadas do bypass-inject
+    // ============================================================
+    async _setupAdClickListeners(id, win) {
+        const inst = this.instances.get(id);
+        if (!inst) return;
+
+        // Injeta funcoes globais que o bypass-inject vai chamar
+        const setupScript = `
+            window.__GS_REPORT_AD_BUTTONS__ = function(buttons) {
+                window.__GS_LAST_AD_BUTTONS__ = buttons;
+                // Dispara evento customizado para o Electron ouvir
+                const evt = new CustomEvent('gs-ad-buttons-found', { detail: buttons });
+                window.dispatchEvent(evt);
+            };
+            window.__GS_REPORT_AD_CLICK_DONE__ = function(success) {
+                const evt = new CustomEvent('gs-ad-click-done', { detail: success });
+                window.dispatchEvent(evt);
+            };
+            true;
+        `;
+        try {
+            await win.webContents.executeJavaScript(setupScript);
+        } catch (e) {
+            this.log(id, 'warn', 'Falha ao setup listeners de ad click: ' + e.message);
+        }
     }
 
     async _runCycle(id, config, win, sess, currentProxy, isRetry = false) {
@@ -268,6 +375,9 @@ class FarmEngine {
         inst.status = 'running';
         inst.phase = null;
         inst.resolved = false;
+        inst.adClickPending = false;
+        inst.adClickButtons = [];
+        inst.adClickIndex = 0;
         this._broadcastStatus();
 
         const scheduler = new Scheduler(config, this.configStore);
@@ -322,7 +432,7 @@ class FarmEngine {
 
         let navFail = false;
         try { await win.loadURL(link, { userAgent: inst.fingerprint.userAgent }); }
-        catch (e) { this.log(id, 'error', `Navegação: ${e.message}`); navFail = true; }
+        catch (e) { this.log(id, 'error', `Navegacao: ${e.message}`); navFail = true; }
 
         if (navFail) {
             this.stats.failCount++;
@@ -335,6 +445,7 @@ class FarmEngine {
         }
 
         await this._injectBypass(win);
+        await this._setupAdClickListeners(id, win);
 
         const startTime = Date.now();
         const TIMEOUT_MS = 45000;
@@ -351,6 +462,35 @@ class FarmEngine {
             if (bstate && bstate.currentStage != null && bstate.totalStages != null) {
                 inst.phase = { current: bstate.currentStage, total: bstate.totalStages };
                 this._broadcastStatus();
+            }
+
+            // NOVO: Verifica se o bypass-inject reportou botoes de anuncio para clicar
+            if (!inst.adClickPending) {
+                try {
+                    const adButtons = await win.webContents.executeJavaScript(`
+                        (function(){
+                            return window.__GS_LAST_AD_BUTTONS__ || null;
+                        })()
+                    `);
+                    if (adButtons && adButtons.length > 0 && !inst.adClickPending) {
+                        inst.adClickPending = true;
+                        this.log(id, 'info', `Recebidos ${adButtons.length} botoes de anuncio para clicar nativamente`);
+                        const clicked = await this._clickAdButtonsNative(win, adButtons);
+                        // Reporta de volta pro bypass-inject
+                        try {
+                            await win.webContents.executeJavaScript(`
+                                if (window.__GS_REPORT_AD_CLICK_DONE__) {
+                                    window.__GS_REPORT_AD_CLICK_DONE__(${clicked ? 'true' : 'false'});
+                                }
+                                window.__GS_LAST_AD_BUTTONS__ = null;
+                                true;
+                            `);
+                        } catch (e) {}
+                        inst.adClickPending = false;
+                    }
+                } catch (e) {
+                    // Ignora erro de polling
+                }
             }
 
             if (url && !isSupportedHost(url) && url !== 'about:blank') {
@@ -401,7 +541,7 @@ class FarmEngine {
                 inst.status = 'view'; inst.phase = null; this._broadcastStatus();
                 setTimeout(() => { if (this.running && !win.isDestroyed()) this._runCycle(id, config, win, sess, currentProxy); }, scheduler.getViewTime());
             } else {
-                this.log(id, 'error', 'Timeout final. Próximo...');
+                this.log(id, 'error', 'Timeout final. Proximo...');
                 this.stats.failCount++;
                 this._recordFail(link);
                 inst.phase = null; this._broadcastStatus();
@@ -412,7 +552,6 @@ class FarmEngine {
 
     async stopAll() {
         this.running = false;
-        // this.proxyManager.stopScanner(); // nao prescisa mais parar!!
         if (this.healthCheckInterval) {
             clearInterval(this.healthCheckInterval);
             this.healthCheckInterval = null;
