@@ -89,7 +89,7 @@ const DEFAULT_PEAKS = [5, 3, 2, 2, 3, 5, 10, 25, 55, 80, 90, 85, 75, 70, 75, 80,
 function renderLinks() {
     els.linksContainer.innerHTML = '';
     const totalWeight = linksData.reduce((s, l) => s + (l.weight || 1), 0);
-    
+
     linksData.forEach((link, idx) => {
         const pct = totalWeight > 0 ? ((link.weight / totalWeight) * 100).toFixed(1) : 0;
         const row = document.createElement('div');
@@ -107,31 +107,31 @@ function renderLinks() {
                 </div>
             </div>
         `;
-        
+
         const urlInput = row.querySelector('.link-url');
         const weightInput = row.querySelector('.link-weight');
         const removeBtn = row.querySelector('.btn-icon');
-        
+
         urlInput.addEventListener('change', () => {
             linksData[idx].url = urlInput.value.trim();
             autoSave();
         });
-        
+
         weightInput.addEventListener('input', (e) => {
             linksData[idx].weight = parseInt(e.target.value) || 1;
             renderLinks();
             autoSave();
         });
-        
+
         removeBtn.addEventListener('click', () => {
             linksData.splice(idx, 1);
             renderLinks();
             autoSave();
         });
-        
+
         els.linksContainer.appendChild(row);
     });
-    
+
     els.linksTotalPct.textContent = `Total: ${linksData.length} link(s)`;
 }
 
@@ -145,7 +145,7 @@ els.addLink.addEventListener('click', () => {
 function renderHeatmap() {
     els.heatmapContainer.innerHTML = '';
     const max = Math.max(...heatmapData, 1);
-    
+
     heatmapData.forEach((val, i) => {
         const bar = document.createElement('div');
         bar.className = 'heatmap-bar';
@@ -156,28 +156,28 @@ function renderHeatmap() {
         const b = Math.round(38 * intensity + 30 * (1 - intensity));
         bar.style.height = `${Math.max(pct, 3)}%`;
         bar.style.background = `rgb(${r},${g},${b})`;
-        bar.title = `${String(i).padStart(2,'0')}:00 — ${Math.round(val)}%`;
-        
+        bar.title = `${String(i).padStart(2, '0')}:00 — ${Math.round(val)}%`;
+
         let dragging = false;
-        
+
         bar.addEventListener('mousedown', (e) => {
             dragging = true;
             e.preventDefault();
             updateBarFromMouse(e, bar, i);
         });
-        
+
         bar.addEventListener('mouseenter', (e) => {
             if (e.buttons === 1) updateBarFromMouse(e, bar, i);
         });
-        
+
         document.addEventListener('mouseup', () => {
             if (dragging) { dragging = false; autoSave(); }
         });
-        
+
         document.addEventListener('mousemove', (e) => {
             if (dragging) updateBarFromMouse(e, bar, i);
         });
-        
+
         els.heatmapContainer.appendChild(bar);
     });
 }
@@ -237,17 +237,17 @@ function readConfig() {
 
 function writeConfig(cfg) {
     if (!cfg) return;
-    
+
     linksData = (cfg.links || []).map(l => typeof l === 'string' ? { url: l, weight: 10 } : { ...l });
     if (linksData.length === 0) linksData = [{ url: '', weight: 10 }];
     renderLinks();
-    
+
     heatmapData = (cfg.peakHours || DEFAULT_PEAKS).slice(0, 24);
     if (heatmapData.length < 24) {
         while (heatmapData.length < 24) heatmapData.push(5);
     }
     renderHeatmap();
-    
+
     // Gerais
     els.cfg.instances.value = cfg.instances || 3;
     els.cfg.headless.value = cfg.headless ? 'true' : 'false';
@@ -259,22 +259,22 @@ function writeConfig(cfg) {
     els.cfg.clearStorage.value = cfg.clearStorage !== false ? 'true' : 'false';
     els.cfg.stealth.value = cfg.stealthMode ? 'true' : 'false';
     els.cfg.earnings.value = cfg.earningsPerBypass || 0.05;
-    
+
     const goal = cfg.dailyGoal || { enabled: false, amount: 50 };
     els.cfg.goalEnabled.value = goal.enabled ? 'true' : 'false';
     els.cfg.goalAmount.value = goal.amount || 50;
-    
+
     // Blacklist
     const bl = cfg.blacklist || { enabled: true, maxFails: 5, cooldownMinutes: 30 };
     els.cfg.blacklistEnabled.value = bl.enabled ? 'true' : 'false';
     els.cfg.blacklistMax.value = bl.maxFails || 5;
     els.cfg.blacklistCooldown.value = bl.cooldownMinutes || 30;
-    
+
     // Cooldown
     const cd = cfg.linkCooldown || { enabled: true, minutes: 10 };
     els.cfg.cooldownEnabled.value = cd.enabled ? 'true' : 'false';
     els.cfg.cooldownMin.value = cd.minutes || 10;
-    
+
     // Webhook
     const wh = cfg.webhook || { enabled: false, type: 'discord', url: '', botToken: '', chatId: '' };
     els.cfg.webhookEnabled.value = wh.enabled ? 'true' : 'false';
@@ -283,7 +283,7 @@ function writeConfig(cfg) {
     els.cfg.webhookToken.value = wh.botToken || '';
     els.cfg.webhookChat.value = wh.chatId || '';
     updateWebhookUI();
-    
+
     updateGoalUI();
     updateEarningsUI();
     updateBlacklistUI(cfg);
@@ -333,13 +333,13 @@ async function renderProfiles() {
         const profiles = await window.electronAPI.listProfiles();
         const list = els.profilesList;
         list.innerHTML = '';
-        
+
         const select = els.cfg.profileSelect;
         select.innerHTML = '<option value="">-- Selecione --</option>';
-        
+
         Object.entries(profiles).forEach(([name, data]) => {
             select.innerHTML += `<option value="${name}">${name}</option>`;
-            
+
             const item = document.createElement('div');
             item.className = 'profile-item';
             const date = data.savedAt ? new Date(data.savedAt).toLocaleDateString('pt-BR') : '?';
@@ -355,7 +355,7 @@ async function renderProfiles() {
             `;
             list.appendChild(item);
         });
-        
+
         list.querySelectorAll('.btn-icon').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const name = btn.dataset.name;
@@ -429,7 +429,7 @@ function renderProxies(list) {
             <button class="btn-trace" data-proxy='${JSON.stringify(p).replace(/'/g, "&#39;")}'>🔍 Rastrear</button>
         </div>
     `}).join('');
-    
+
     document.querySelectorAll('.btn-trace').forEach(btn => {
         btn.addEventListener('click', async () => {
             const proxy = JSON.parse(btn.dataset.proxy);
@@ -479,7 +479,29 @@ function renderInstances(data) {
         return;
     }
     els.instancesList.innerHTML = instances.map(inst => {
-        const phaseText = inst.phase ? `Fase ${inst.phase.current}/${inst.phase.total}` : (inst.status === 'view' ? '👁 View' : '...');
+        // Fase atual com destaque
+        let phaseText = '...';
+        if (inst.phase && inst.phase.text) {
+            phaseText = `<span class="phase-badge">📍 ${inst.phase.text}</span>`;
+        } else if (inst.status === 'view') {
+            phaseText = '👁 View';
+        }
+
+        // Coordenada sendo testada com destaque
+        let coordText = '';
+        if (inst.lastAdClickCoords) {
+            const c = inst.lastAdClickCoords;
+            coordText = `<span class="coord-badge">🎯 (${c.x}, ${c.y}) [${c.label}]</span>`;
+        } else if (inst.adClickCoordsCount > 0) {
+            coordText = `<span class="coord-badge">🎯 ${inst.adClickCoordsCount} coords prontas</span>`;
+        }
+
+        // URL final
+        let finalUrlText = '';
+        if (inst.finalUrl) {
+            finalUrlText = `<span class="finalurl-badge">📌 ${inst.finalUrl}</span>`;
+        }
+
         const pingText = inst.proxyPing ? `${inst.proxyPing}ms` : '';
         const tierText = inst.proxyTier ? `T${inst.proxyTier}` : '';
         return `
@@ -489,6 +511,8 @@ function renderInstances(data) {
                 <div class="instance-status ${inst.status || 'idle'}">${(inst.status || 'idle').toUpperCase()}</div>
                 <div class="instance-link">${inst.currentLink || 'Aguardando...'}</div>
                 <div class="instance-phase">${phaseText}</div>
+                <div class="instance-coord">${coordText}</div>
+                <div class="instance-finalurl">${finalUrlText}</div>
             </div>
             <div class="instance-meta">
                 <div class="instance-proxy">${inst.proxy || 'direto'}</div>
@@ -514,7 +538,7 @@ function updateEarningsUI() {
     const today = success * perBypass;
     const month = today * 30;
     const year = today * 365;
-    
+
     els.statEarnings.textContent = `R$ ${today.toFixed(2).replace('.', ',')}`;
     els.statEarningsSub.textContent = `R$ ${perBypass.toFixed(3).replace('.', ',')} / bypass`;
     els.earnToday.textContent = `R$ ${today.toFixed(2).replace('.', ',')}`;
@@ -529,7 +553,7 @@ function updateGoalUI() {
     const success = parseInt(els.statSuccess.textContent) || 0;
     const earned = success * perBypass;
     const pct = goalAmount > 0 ? Math.min(100, (earned / goalAmount) * 100) : 0;
-    
+
     if (goalEnabled) {
         els.goalPanel.style.display = 'block';
         els.goalText.textContent = `R$ ${earned.toFixed(2).replace('.', ',')} / R$ ${goalAmount.toFixed(2).replace('.', ',')}`;
@@ -538,7 +562,7 @@ function updateGoalUI() {
         const remaining = Math.max(0, goalAmount - earned);
         const needed = remaining > 0 ? Math.ceil(remaining / perBypass) : 0;
         els.goalSub.textContent = pct >= 100 ? '🎉 Meta batida! Farm será pausado.' : `Faltam R$ ${remaining.toFixed(2).replace('.', ',')} — ~${needed} bypasses`;
-        
+
         els.goalMiniFill.style.width = `${pct}%`;
         els.goalMiniFill.style.background = pct >= 100 ? '#22c55e' : '#dc2626';
         els.goalMiniText.textContent = `R$ ${earned.toFixed(2).replace('.', ',')} / R$ ${goalAmount.toFixed(2).replace('.', ',')}`;
@@ -558,7 +582,7 @@ function updateBlacklistUI(cfg) {
     } else {
         const now = Date.now();
         const blCfg = cfg.blacklist || { cooldownMinutes: 30 };
-        const active = entries.filter(([,v]) => now < v.pausedAt + (blCfg.cooldownMinutes * 60 * 1000));
+        const active = entries.filter(([, v]) => now < v.pausedAt + (blCfg.cooldownMinutes * 60 * 1000));
         if (active.length === 0) {
             els.blacklistStatus.textContent = 'Nenhum link na blacklist.';
             els.blacklistStatus.className = 'tip-box';
@@ -576,13 +600,13 @@ async function renderAnalytics() {
     try {
         const data = await window.electronAPI.getAnalytics();
         analyticsData = data;
-        
+
         const stats = data.linkStats || {};
         const links = Object.entries(stats);
         if (links.length === 0) {
             els.linkStatsContainer.innerHTML = '<div class="empty-state">Nenhum dado ainda. Inicie o farm para coletar estatísticas.</div>';
         } else {
-            const totalSuccess = links.reduce((s, [,v]) => s + (v.success || 0), 0);
+            const totalSuccess = links.reduce((s, [, v]) => s + (v.success || 0), 0);
             els.linkStatsContainer.innerHTML = links.map(([url, stat]) => {
                 const s = stat.success || 0;
                 const f = stat.fail || 0;
@@ -602,27 +626,27 @@ async function renderAnalytics() {
                 </div>`;
             }).join('');
         }
-        
+
         const daily = data.dailyStats || {};
         const days = Object.entries(daily).sort().slice(-7);
         if (days.length === 0) {
             els.timelineContainer.innerHTML = '<div class="empty-state">Nenhum dado histórico.</div>';
         } else {
-            const maxVal = Math.max(...days.map(([,v]) => (v.success || 0) + (v.fail || 0)), 1);
+            const maxVal = Math.max(...days.map(([, v]) => (v.success || 0) + (v.fail || 0)), 1);
             els.timelineContainer.innerHTML = `
             <div class="timeline-chart">
                 ${days.map(([date, v]) => {
-                    const total = (v.success || 0) + (v.fail || 0);
-                    const h = (total / maxVal) * 100;
-                    const sPct = total > 0 ? ((v.success || 0) / total) * 100 : 0;
-                    return `
+                const total = (v.success || 0) + (v.fail || 0);
+                const h = (total / maxVal) * 100;
+                const sPct = total > 0 ? ((v.success || 0) / total) * 100 : 0;
+                return `
                     <div class="timeline-col">
                         <div class="timeline-bar" style="height:${h}%">
                             <div class="timeline-bar-success" style="height:${sPct}%"></div>
                         </div>
                         <div class="timeline-label">${date.slice(5)}</div>
                     </div>`;
-                }).join('')}
+            }).join('')}
             </div>`;
         }
     } catch (e) { console.error('Analytics error:', e); }
@@ -633,7 +657,7 @@ els.start.addEventListener('click', async () => {
     try {
         const cfg = readConfig();
         if (cfg.links.length === 0) { alert('Adicione pelo menos 1 link!'); return; }
-        
+
         const goal = cfg.dailyGoal || {};
         if (goal.enabled) {
             const data = await window.electronAPI.getAnalytics();
@@ -645,7 +669,7 @@ els.start.addEventListener('click', async () => {
                 return;
             }
         }
-        
+
         els.start.disabled = true; els.start.textContent = '⏳ Iniciando...';
         const res = await window.electronAPI.startFarm(cfg);
         els.start.disabled = false; els.start.textContent = '▶ Iniciar Farm';
@@ -691,7 +715,7 @@ window.electronAPI.onProxyUpdated((list) => renderProxies(list));
 
 setInterval(async () => {
     try { const proxies = await window.electronAPI.listProxies(); renderProxies(proxies); }
-    catch (e) {}
+    catch (e) { }
 }, 10000);
 
 setInterval(() => { if (isRunning) renderAnalytics(); }, 30000);

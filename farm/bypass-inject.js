@@ -1,6 +1,5 @@
 (function () {
     "use strict";
-
     var __gs_lastOpenedUrl = null;
     var __gs_lastOpenTime = 0;
     var originalOpen = window.open;
@@ -21,6 +20,14 @@
     const STATE_KEY = "gs_bypass_state_v6";
     const CLICK_DELAY = 5000;
     const HOST = location.hostname.toLowerCase();
+
+    // API para o Electron ler a URL aberta
+    window.__GS_GET_OPENED_URL__ = function () {
+        if (__gs_lastOpenedUrl && (Date.now() - __gs_lastOpenTime) < 15000) {
+            return __gs_lastOpenedUrl;
+        }
+        return null;
+    };
 
     const SUPPORTED_ROOTS = [
         "alpharede.com", "rodaemotor.com", "guis2.com",
@@ -67,51 +74,51 @@
     }
 
     const CHAR_MAP = {
-        'A':'A','a':'A','4':'A','@':'A','\u0394':'A','\u039B':'A','\u00C2':'A','\u00C3':'A','\u00C4':'A','\u00C0':'A','\u00C1':'A','\u00C5':'A','\u00C6':'A',
-        'B':'B','b':'B','8':'B','\u00DF':'B','\u03B2':'B','\u0411':'B',
-        'C':'C','c':'C','(':'C','[':'C','{':'C','\u00A9':'C','\u00A2':'C','\u00C7':'C',
-        'D':'D','d':'D','\u00D0':'D','\u0110':'D',
-        'E':'E','e':'E','3':'E','\u20AC':'E','\u00A3':'E','\u00CA':'E','\u00CB':'E','\u00C9':'E','\u00C8':'E',
-        'F':'F','f':'F','\u0192':'F',
-        'G':'G','g':'G','9':'G','\u011F':'G',
-        'H':'H','h':'H','#':'H','\u0126':'H','\u0124':'H',
-        'I':'I','i':'I','1':'I','!':'I','|':'I','\u00CE':'I','\u00CF':'I','\u00CD':'I','\u00CC':'I','\u0130':'I','\u0131':'I',
-        'J':'J','j':'J',
-        'K':'K','k':'K','\u0138':'K','\u03BA':'K',
-        'L':'L','l':'L','\u0139':'L','\u013B':'L','\u013D':'L',
-        'M':'M','m':'M','\u039C':'M','\u043C':'M',
-        'N':'N','n':'N','\u2229':'N','\u03A0':'N','\u00D1':'N','\u0143':'N','\u0144':'N',
-        'O':'O','o':'O','0':'O','\u00D8':'O','\u00B0':'O','\u00BA':'O','\u00D4':'O','\u00D6':'O','\u00D2':'O','\u00D3':'O','\u00D5':'O',
-        'P':'P','p':'P','\u00B6':'P','\u00FE':'P','\u00DE':'P','\u03C1':'P',
-        'Q':'Q','q':'Q',
-        'R':'R','r':'R','\u00AE':'R','\u042F':'R','\u0158':'R','\u0159':'R',
-        'S':'S','s':'S','5':'S','$':'S','\u00A7':'S','\u015A':'S','\u015B':'S','\u0160':'S','\u0161':'S',
-        'T':'T','t':'T','7':'T','+':'T','\u2020':'T','\u0164':'T','\u0165':'T',
-        'U':'U','u':'U','\u00B5':'U','\u00DB':'U','\u00DC':'U','\u00D9':'U','\u00DA':'U','\u016E':'U',
-        'V':'V','v':'V','\u03BD':'V',
-        'W':'W','w':'W','\u03C9':'W','\u0174':'W','\u0175':'W',
-        'X':'X','x':'X','\u00D7':'X','\u03A7':'X',
-        'Y':'Y','y':'Y','\u00A5':'Y','\u00DD':'Y','\u00FD':'Y','\u00FF':'Y',
-        'Z':'Z','z':'Z','2':'Z','\u017D':'Z','\u017E':'Z',
-        '_':' ','-':' ','.':' ','\u00B7':' ','\u2022':' ',' ':' '
+        'A': 'A', 'a': 'A', '4': 'A', '@': 'A', '\u0394': 'A', '\u039B': 'A', '\u00C2': 'A', '\u00C3': 'A', '\u00C4': 'A', '\u00C0': 'A', '\u00C1': 'A', '\u00C5': 'A', '\u00C6': 'A',
+        'B': 'B', 'b': 'B', '8': 'B', '\u00DF': 'B', '\u03B2': 'B', '\u0411': 'B',
+        'C': 'C', 'c': 'C', '(': 'C', '[': 'C', '{': 'C', '\u00A9': 'C', '\u00A2': 'C', '\u00C7': 'C',
+        'D': 'D', 'd': 'D', '\u00D0': 'D', '\u0110': 'D',
+        'E': 'E', 'e': 'E', '3': 'E', '\u20AC': 'E', '\u00A3': 'E', '\u00CA': 'E', '\u00CB': 'E', '\u00C9': 'E', '\u00C8': 'E',
+        'F': 'F', 'f': 'F', '\u0192': 'F',
+        'G': 'G', 'g': 'G', '9': 'G', '\u011F': 'G',
+        'H': 'H', 'h': 'H', '#': 'H', '\u0126': 'H', '\u0124': 'H',
+        'I': 'I', 'i': 'I', '1': 'I', '!': 'I', '|': 'I', '\u00CE': 'I', '\u00CF': 'I', '\u00CD': 'I', '\u00CC': 'I', '\u0130': 'I', '\u0131': 'I',
+        'J': 'J', 'j': 'J',
+        'K': 'K', 'k': 'K', '\u0138': 'K', '\u03BA': 'K',
+        'L': 'L', 'l': 'L', '\u0139': 'L', '\u013B': 'L', '\u013D': 'L',
+        'M': 'M', 'm': 'M', '\u039C': 'M', '\u043C': 'M',
+        'N': 'N', 'n': 'N', '\u2229': 'N', '\u03A0': 'N', '\u00D1': 'N', '\u0143': 'N', '\u0144': 'N',
+        'O': 'O', 'o': 'O', '0': 'O', '\u00D8': 'O', '\u00B0': 'O', '\u00BA': 'O', '\u00D4': 'O', '\u00D6': 'O', '\u00D2': 'O', '\u00D3': 'O', '\u00D5': 'O',
+        'P': 'P', 'p': 'P', '\u00B6': 'P', '\u00FE': 'P', '\u00DE': 'P', '\u03C1': 'P',
+        'Q': 'Q', 'q': 'Q',
+        'R': 'R', 'r': 'R', '\u00AE': 'R', '\u042F': 'R', '\u0158': 'R', '\u0159': 'R',
+        'S': 'S', 's': 'S', '5': 'S', '$': 'S', '\u00A7': 'S', '\u015A': 'S', '\u015B': 'S', '\u0160': 'S', '\u0161': 'S',
+        'T': 'T', 't': 'T', '7': 'T', '+': 'T', '\u2020': 'T', '\u0164': 'T', '\u0165': 'T',
+        'U': 'U', 'u': 'U', '\u00B5': 'U', '\u00DB': 'U', '\u00DC': 'U', '\u00D9': 'U', '\u00DA': 'U', '\u016E': 'U',
+        'V': 'V', 'v': 'V', '\u03BD': 'V',
+        'W': 'W', 'w': 'W', '\u03C9': 'W', '\u0174': 'W', '\u0175': 'W',
+        'X': 'X', 'x': 'X', '\u00D7': 'X', '\u03A7': 'X',
+        'Y': 'Y', 'y': 'Y', '\u00A5': 'Y', '\u00DD': 'Y', '\u00FD': 'Y', '\u00FF': 'Y',
+        'Z': 'Z', 'z': 'Z', '2': 'Z', '\u017D': 'Z', '\u017E': 'Z',
+        '_': ' ', '-': ' ', '.': ' ', '\u00B7': ' ', '\u2022': ' ', ' ': ' '
     };
 
     const KEYWORDS = [
-        'CONTINUAR','AVANCAR','AVANCAR','PROXIMO','PROXIMO','PROXIMA','PROXIMA',
-        'CLIQUE NO LINK','CLIQUE PARA CONTINUAR','CONTINUE','NEXT',
-        'CONTINUAR PARA O LINK','IR PARA O LINK','ABRIR LINK',
-        'GET LINK','GO TO LINK','CLICK HERE',
-        'CONTINUAR LINK','ACESSAR','ACESSAR LINK','CONTINUAR AGORA','CONTINUAR PARA',
-        'PROSSEGUIR'
+        'CONTINUAR', 'AVANCAR', 'AVANCAR ETAPA', 'PROXIMO', 'PROXIMO', 'PROXIMA', 'PROXIMA',
+        'CLIQUE NO LINK', 'CLIQUE PARA CONTINUAR', 'CONTINUE', 'NEXT',
+        'CONTINUAR PARA O LINK', 'IR PARA O LINK', 'ABRIR LINK',
+        'GET LINK', 'GO TO LINK', 'CLICK HERE', 'CLIQUE AQUI'
+        'CONTINUAR LINK', 'ACESSAR', 'ACESSAR LINK', 'CONTINUAR AGORA', 'CONTINUAR PARA',
+        'PROSSEGUIR', 'TOQUE NO BOTAO', 'APERTE NO BOTAO', 'TOQUE NO ANUNCIO', 'CLIQUE NO ANUNCIO', 'APERTE NO ANUNCIO'
     ];
 
     const NEGATIVE_KEYWORDS = [
-        'PRIVACY','POLICY','POLITICA','POLITICA','TERMOS','TERMS',
-        'CONTACT','CONTATO','ABOUT','SOBRE','HELP','AJUDA','FAQ',
-        'SUPPORT','SUPORTE','COPYRIGHT','DIREITOS','DMCA',
-        'DISCLAIMER','HOME','INICIO','INICIO',
-        'LOGIN','REGISTER','SUBSCRIBE','SETTINGS','CONFIG','CONFIGURACAO',
-        'BACK','VOLTAR','RETURN','MENU','SEARCH','BUSCAR'
+        'PRIVACY', 'POLICY', 'POLITICA', 'POLITICA', 'TERMOS', 'TERMS',
+        'CONTACT', 'CONTATO', 'ABOUT', 'SOBRE', 'HELP', 'AJUDA', 'FAQ',
+        'SUPPORT', 'SUPORTE', 'COPYRIGHT', 'DIREITOS', 'DMCA',
+        'DISCLAIMER', 'HOME', 'INICIO', 'INICIO',
+        'LOGIN', 'REGISTER', 'SUBSCRIBE', 'SETTINGS', 'CONFIG', 'CONFIGURACAO',
+        'BACK', 'VOLTAR', 'RETURN', 'MENU', 'SEARCH', 'BUSCAR'
     ];
 
     const FOOTER_TERMS = ['terms', 'termos', 'privacy', 'privacidade', 'policy', 'politica', 'politica',
@@ -293,7 +300,7 @@
             }
         }
 
-        filtered.sort(function(a, b) { return a.length - b.length; });
+        filtered.sort(function (a, b) { return a.length - b.length; });
         return filtered[0] || '';
     }
 
@@ -327,7 +334,7 @@
                     var linkHost = new URL(href, location.href).hostname.toLowerCase();
                     if (!isSupportedHost(linkHost)) hrefBonus = 0.08;
                     else if (href.indexOf('redirect') !== -1 || href.indexOf('next') !== -1 || href.indexOf('go') !== -1) hrefBonus = 0.04;
-                } catch (e) {}
+                } catch (e) { }
             }
 
             var childPenalty = el.children.length > 3 ? -0.04 : 0;
@@ -390,10 +397,10 @@
             var m = text.match(/(\d+)\s*[/\-]\s*(\d+)/);
             if (m) {
                 var style = window.getComputedStyle(el);
-                var isProminent = parseFloat(style.fontSize) >= 14 || 
-                                    style.fontWeight === 'bold' || 
-                                    parseInt(style.zIndex) > 0 ||
-                                    el.tagName === 'H1' || el.tagName === 'H2' || el.tagName === 'H3';
+                var isProminent = parseFloat(style.fontSize) >= 14 ||
+                    style.fontWeight === 'bold' ||
+                    parseInt(style.zIndex) > 0 ||
+                    el.tagName === 'H1' || el.tagName === 'H2' || el.tagName === 'H3';
                 if (isProminent || i < 50) {
                     return { current: parseInt(m[1], 10), total: parseInt(m[2], 10), text: m[0] };
                 }
@@ -463,8 +470,8 @@
     function highlightIframeButton(btn, color, duration) {
         var hl = document.createElement('div');
         hl.style.cssText = 'position:fixed;z-index:2147483646;pointer-events:none;' +
-            'left:' + (btn.x - btn.width/2 - 4) + 'px;' +
-            'top:' + (btn.y - btn.height/2 - 4) + 'px;' +
+            'left:' + (btn.x - btn.width / 2 - 4) + 'px;' +
+            'top:' + (btn.y - btn.height / 2 - 4) + 'px;' +
             'width:' + (btn.width + 8) + 'px;height:' + (btn.height + 8) + 'px;' +
             'border:3px solid ' + color + ';border-radius:4px;' +
             'background:' + color + '22;box-shadow:0 0 10px ' + color + ';' +
@@ -472,9 +479,9 @@
         hl.className = 'gs-iframe-btn-highlight';
         document.body.appendChild(hl);
         if (duration > 0) {
-            setTimeout(function() {
+            setTimeout(function () {
                 hl.style.opacity = '0';
-                setTimeout(function() { if (hl.parentNode) hl.parentNode.removeChild(hl); }, 300);
+                setTimeout(function () { if (hl.parentNode) hl.parentNode.removeChild(hl); }, 300);
             }, duration);
         }
         return hl;
@@ -536,17 +543,17 @@
     function highlightAd(el, duration) {
         if (!el) return;
         el.classList.add('gs-ad-highlight');
-        try { el.scrollIntoView({ behavior: 'instant', block: 'center' }); } catch (e) {}
+        try { el.scrollIntoView({ behavior: 'instant', block: 'center' }); } catch (e) { }
         if (duration > 0) {
             setTimeout(function () {
-                try { el.classList.remove('gs-ad-highlight'); } catch (e) {}
+                try { el.classList.remove('gs-ad-highlight'); } catch (e) { }
             }, duration);
         }
     }
 
     function removeAdHighlight(el) {
         if (!el) return;
-        try { el.classList.remove('gs-ad-highlight'); } catch (e) {}
+        try { el.classList.remove('gs-ad-highlight'); } catch (e) { }
     }
 
     // NOVO: Gera coordenadas de clique no anuncio (sem depender de botoes)
@@ -562,11 +569,11 @@
             var src = (iframe.src || '').toLowerCase();
             var parent = iframe.parentElement;
             var parentCls = parent ? (parent.className || '').toLowerCase() : '';
-            var isAd = src.indexOf('google') !== -1 || 
-                       src.indexOf('doubleclick') !== -1 || 
-                       src.indexOf('ads') !== -1 ||
-                       parentCls.indexOf('ad') !== -1 ||
-                       parentCls.indexOf('ads') !== -1;
+            var isAd = src.indexOf('google') !== -1 ||
+                src.indexOf('doubleclick') !== -1 ||
+                src.indexOf('ads') !== -1 ||
+                parentCls.indexOf('ad') !== -1 ||
+                parentCls.indexOf('ads') !== -1;
 
             if (isAd || rect.width > 200 || rect.height > 100) {
                 coords.push({
@@ -678,17 +685,17 @@
     function highlightElement(el, duration) {
         if (!el) return;
         el.classList.add('gs-highlight');
-        try { el.scrollIntoView({ behavior: 'instant', block: 'center' }); } catch (e) {}
+        try { el.scrollIntoView({ behavior: 'instant', block: 'center' }); } catch (e) { }
         if (duration > 0) {
             setTimeout(function () {
-                try { el.classList.remove('gs-highlight'); } catch (e) {}
+                try { el.classList.remove('gs-highlight'); } catch (e) { }
             }, duration);
         }
     }
 
     function removeHighlight(el) {
         if (!el) return;
-        try { el.classList.remove('gs-highlight'); } catch (e) {}
+        try { el.classList.remove('gs-highlight'); } catch (e) { }
     }
 
     // ===== CLICK COM TIMEOUT DE PROTECAO =====
@@ -709,7 +716,7 @@
             try {
                 var ev = new MouseEvent(type, { bubbles: true, cancelable: true, view: window });
                 el.dispatchEvent(ev);
-            } catch (e) {}
+            } catch (e) { }
         });
 
         try {
@@ -724,7 +731,7 @@
         if (el.tagName === 'A' && el.href) {
             setTimeout(function () {
                 if (!window.__GS_STOP_NAV__) {
-                    try { location.href = el.href; } catch (e) {}
+                    try { location.href = el.href; } catch (e) { }
                 }
             }, 300);
         }
@@ -1074,7 +1081,7 @@
 
                 // Aguarda o Electron processar o clique
                 var adClickResolved = false;
-                var checkInterval = setInterval(function() {
+                var checkInterval = setInterval(function () {
                     if (adClickResolved || manuallyClosed) {
                         clearInterval(checkInterval);
                         return;
@@ -1082,7 +1089,7 @@
                     // Verifica se URL mudou (sinal de que o Electron clicou e funcionou)
                     var currentUrl = location.href;
                     var destHost = '';
-                    try { destHost = new URL(currentUrl).hostname.toLowerCase(); } catch(e) {}
+                    try { destHost = new URL(currentUrl).hostname.toLowerCase(); } catch (e) { }
                     if (!isSupportedHost(destHost) && currentUrl !== 'about:blank') {
                         adClickResolved = true;
                         clearInterval(checkInterval);
@@ -1093,7 +1100,7 @@
                 }, 1000);
 
                 // Timeout de seguranca
-                setTimeout(function() {
+                setTimeout(function () {
                     if (!adClickResolved) {
                         clearInterval(checkInterval);
                         adClickResolved = true;
@@ -1287,6 +1294,8 @@
         setState({ active: true, running: false, dismissed: false, completed: false, currentStage: null, totalStages: null, finalUrl: null, status: "Obtendo sessao..." });
         runBypass();
     }
+
+    startNewBypass();
 
     function autoResume() {
         if (manuallyClosed || startedThisPage) return;

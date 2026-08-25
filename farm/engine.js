@@ -218,13 +218,12 @@ class FarmEngine {
             window: win, session: sess, fingerprint: fp, status: 'starting',
             cycle: 0, phase: null, currentLink: null, proxy: proxy,
             timeoutId: null, pollId: null, resolved: false,
-            // NOVO: state para controle de sucesso por URL final
             finalUrl: null,
             lastAdClickCoords: null,
             adClickAttempts: 0,
-            maxAdClickAttempts: 5,
-            // NOVO: coordenadas de clique no anuncio (prioridade)
-            adClickCoords: []
+            maxAdClickAttempts: 8,
+            adClickCoords: [],
+            currentCoordIndex: 0
         });
         this._broadcastStatus();
 
@@ -257,24 +256,22 @@ class FarmEngine {
     }
 
     // ============================================================
-    // NOVO: Detecta fase atual buscando texto "X/Y" na pagina
+    // Detecta fase atual buscando texto "X/Y" na pagina
     // ============================================================
     async _detectPhaseFromPage(win) {
         try {
             const result = await win.webContents.executeJavaScript(`
                 (function(){
-                    // Busca por padroes como "1/6", "2/6", "3 / 6", etc.
                     const bodyText = document.body ? document.body.innerText : '';
-                    const match = bodyText.match(/(\d+)\s*[/\-]\s*(\d+)/);
+                    const match = bodyText.match(/(\\d+)\\s*[/\\-]\\s*(\\d+)/);
                     if (match) {
                         return { current: parseInt(match[1], 10), total: parseInt(match[2], 10), text: match[0] };
                     }
-                    // Tambem busca em elementos com estilo de destaque (tipicamente no topo)
                     const allElements = document.querySelectorAll('*');
                     for (let i = 0; i < Math.min(allElements.length, 200); i++) {
                         const el = allElements[i];
                         const text = el.innerText || el.textContent || '';
-                        const m = text.match(/(\d+)\s*[/\-]\s*(\d+)/);
+                        const m = text.match(/(\\d+)\\s*[/\\-]\\s*(\\d+)/);
                         if (m) {
                             const style = window.getComputedStyle(el);
                             const isProminent = parseFloat(style.fontSize) >= 14 || 
@@ -294,36 +291,26 @@ class FarmEngine {
     }
 
     // ============================================================
-    // NOVO: CLICA POR COORDENADAS (multiplas tentativas)
-    // Nao depende mais de detectar botoes — so coordenadas
+    // CLICA POR COORDENADAS (multiplas tentativas)
+    // Nao depende de detectar botoes — so coordenadas
     // ============================================================
     async _clickByCoordinates(win, coords) {
         const wc = win.webContents;
         const { x, y } = coords;
 
-        this.log(null, 'info', `🎯 Click em coordenada (${x}, ${y})`);
+        this.log(null, 'info', `🎯 CLICK em (${x}, ${y}) — ${coords.label || 'coordenada'}`);
 
         try {
-            // Move mouse
             wc.sendInputEvent({ type: 'mouseMove', x, y });
+            await this._sleep(200);
+            wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
             await this._sleep(150);
-
-            // Mouse down
+            wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+            await this._sleep(400);
             wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
             await this._sleep(100);
-
-            // Mouse up
             wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
-            await this._sleep(300);
-
-            // Segundo click (reforco)
-            wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
-            await this._sleep(80);
-            wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
-
-            // Espera pra ver se abriu popup/nova aba
-            await this._sleep(1200);
-
+            await this._sleep(1500);
             return true;
         } catch (e) {
             this.log(null, 'warn', `Erro no click em (${x},${y}): ${e.message}`);
@@ -332,40 +319,55 @@ class FarmEngine {
     }
 
     // ============================================================
-    // NOVO: Tenta multiplas coordenadas no anuncio
+    // Tenta multiplas coordenadas no anuncio, uma por vez
     // ============================================================
-    async _tryAdClickCoordinates(win, coordsList) {
+    async _tryAdClickCoordinates(win, coordsList, inst) {
         if (!coordsList || coordsList.length === 0) return false;
 
         for (let i = 0; i < coordsList.length; i++) {
+            if (inst.resolved) return false;
             const coords = coordsList[i];
-            this.log(null, 'info', `🎯 Tentativa ${i + 1}/${coordsList.length} — coordenada (${coords.x}, ${coords.y})`);
+            inst.currentCoordIndex = i;
+            inst.lastAdClickCoords = coords;
+            this._broadcastStatus();
+
+            this.log(null, 'info', `🎯 Tentativa ${i + 1}/${coordsList.length} — (${coords.x}, ${coords.y}) [${coords.label}]`);
 
             const clicked = await this._clickByCoordinates(win, coords);
             if (!clicked) continue;
 
-            // Verifica se URL mudou para fora do site suportado (sinal de sucesso)
-            const currentUrl = win.webContents.getURL();
-            if (!isSupportedHost(currentUrl) && currentUrl !== 'about:blank') {
-                this.log(null, 'success', `✅ URL mudou apos click: ${currentUrl.substring(0, 60)}`);
-                return true;
+            // Aguarda pra ver se URL mudou ou se window.open capturou algo
+            await this._sleep(2500);
+
+            // Verifica se window.open capturou URL final
+            const openedUrl = await this._readOpenedUrl(win);
+            if (openedUrl && !isSupportedHost(openedUrl)) {
+                this.log(null, 'success', `✅ window.open capturou: ${openedUrl.substring(0, 60)}`);
+                inst.finalUrl = openedUrl;
+                return 'opened';
             }
 
-            // Verifica se abriu nova janela (popup do anuncio)
-            await this._sleep(800);
+            // Verifica se a URL atual mudou pra fora do site suportado
+            const currentUrl = win.webContents.getURL();
+            if (!isSupportedHost(currentUrl) && currentUrl !== 'about:blank') {
+                this.log(null, 'success', `✅ Navegou para: ${currentUrl.substring(0, 60)}`);
+                return 'navigated';
+            }
         }
 
         return false;
     }
 
     // ============================================================
-    // NOVO: Gera coordenadas candidatas para clique no anuncio
+    // Gera coordenadas candidatas para clique no anuncio
     // ============================================================
     async _generateAdClickCoords(win) {
         try {
             const coords = await win.webContents.executeJavaScript(`
                 (function(){
                     const coords = [];
+                    const w = window.innerWidth;
+                    const h = window.innerHeight;
 
                     // 1. Tenta encontrar iframes de anuncio
                     const iframes = document.querySelectorAll('iframe');
@@ -378,7 +380,6 @@ class FarmEngine {
                         const parent = iframe.parentElement;
                         const parentCls = parent ? (parent.className || '').toLowerCase() : '';
 
-                        // Verifica se parece anuncio
                         const isAd = src.indexOf('google') !== -1 || 
                                      src.indexOf('doubleclick') !== -1 || 
                                      src.indexOf('ads') !== -1 ||
@@ -430,26 +431,22 @@ class FarmEngine {
                     }
 
                     // 3. Coordenadas genericas (centro da tela, areas comuns de anuncio)
-                    const w = window.innerWidth;
-                    const h = window.innerHeight;
-
-                    // Centro da tela
                     coords.push({ x: Math.round(w / 2), y: Math.round(h / 2), label: 'screen-center', source: 'generic' });
-
-                    // Topo central (banner comum)
-                    coords.push({ x: Math.round(w / 2), y: Math.round(h * 0.15), label: 'top-center', source: 'generic' });
-                    coords.push({ x: Math.round(w * 0.25), y: Math.round(h * 0.15), label: 'top-left', source: 'generic' });
-                    coords.push({ x: Math.round(w * 0.75), y: Math.round(h * 0.15), label: 'top-right', source: 'generic' });
-
-                    // Meio da tela
+                    coords.push({ x: Math.round(w / 2), y: Math.round(h * 0.12), label: 'top-center', source: 'generic' });
+                    coords.push({ x: Math.round(w * 0.25), y: Math.round(h * 0.12), label: 'top-left', source: 'generic' });
+                    coords.push({ x: Math.round(w * 0.75), y: Math.round(h * 0.12), label: 'top-right', source: 'generic' });
+                    coords.push({ x: Math.round(w / 2), y: Math.round(h * 0.25), label: 'upper-mid-center', source: 'generic' });
+                    coords.push({ x: Math.round(w * 0.3), y: Math.round(h * 0.25), label: 'upper-mid-left', source: 'generic' });
+                    coords.push({ x: Math.round(w * 0.7), y: Math.round(h * 0.25), label: 'upper-mid-right', source: 'generic' });
                     coords.push({ x: Math.round(w / 2), y: Math.round(h * 0.4), label: 'mid-center', source: 'generic' });
                     coords.push({ x: Math.round(w * 0.3), y: Math.round(h * 0.4), label: 'mid-left', source: 'generic' });
                     coords.push({ x: Math.round(w * 0.7), y: Math.round(h * 0.4), label: 'mid-right', source: 'generic' });
-
-                    // Baixo da tela
-                    coords.push({ x: Math.round(w / 2), y: Math.round(h * 0.7), label: 'lower-center', source: 'generic' });
-                    coords.push({ x: Math.round(w * 0.3), y: Math.round(h * 0.7), label: 'lower-left', source: 'generic' });
-                    coords.push({ x: Math.round(w * 0.7), y: Math.round(h * 0.7), label: 'lower-right', source: 'generic' });
+                    coords.push({ x: Math.round(w / 2), y: Math.round(h * 0.55), label: 'lower-mid-center', source: 'generic' });
+                    coords.push({ x: Math.round(w * 0.3), y: Math.round(h * 0.55), label: 'lower-mid-left', source: 'generic' });
+                    coords.push({ x: Math.round(w * 0.7), y: Math.round(h * 0.55), label: 'lower-mid-right', source: 'generic' });
+                    coords.push({ x: Math.round(w / 2), y: Math.round(h * 0.75), label: 'lower-center', source: 'generic' });
+                    coords.push({ x: Math.round(w * 0.3), y: Math.round(h * 0.75), label: 'lower-left', source: 'generic' });
+                    coords.push({ x: Math.round(w * 0.7), y: Math.round(h * 0.75), label: 'lower-right', source: 'generic' });
 
                     return coords;
                 })()
@@ -462,7 +459,7 @@ class FarmEngine {
     }
 
     // ============================================================
-    // NOVO: Obtem a URL final esperada do bypass-inject
+    // Le a URL final esperada do bypass-inject state
     // ============================================================
     async _readFinalUrl(win) {
         try {
@@ -480,23 +477,70 @@ class FarmEngine {
     }
 
     // ============================================================
-    // NOVO: Verifica se a instancia chegou na URL final
+    // Le a URL que foi aberta via window.open (capturada pelo bypass)
+    // ============================================================
+    async _readOpenedUrl(win) {
+        try {
+            return await win.webContents.executeJavaScript(`
+                (function(){
+                    try {
+                        if (window.__gs_lastOpenedUrl && (Date.now() - window.__gs_lastOpenTime) < 10000) {
+                            return window.__gs_lastOpenedUrl;
+                        }
+                        return null;
+                    } catch(e) { return null; }
+                })()
+            `);
+        } catch (e) { return null; }
+    }
+
+    // ============================================================
+    // Verifica se a instancia chegou na URL final
+    // CRITERIO UNICO DE SUCESSO: estar na URL final
     // ============================================================
     async _checkReachedFinalUrl(win, expectedFinalUrl) {
         if (!expectedFinalUrl) return false;
         try {
             const currentUrl = win.webContents.getURL();
-            // Verifica se a URL atual contem a URL final ou vice-versa
-            // Ou se saiu do dominio suportado (que indica que chegou no destino)
-            if (currentUrl.includes(expectedFinalUrl) || expectedFinalUrl.includes(currentUrl)) {
+            // Normaliza URLs para comparacao
+            const normCurrent = currentUrl.replace(/\/$/, '').toLowerCase();
+            const normExpected = expectedFinalUrl.replace(/\/$/, '').toLowerCase();
+
+            // Correspondencia direta ou uma contem a outra
+            if (normCurrent === normExpected || normCurrent.includes(normExpected) || normExpected.includes(normCurrent)) {
                 return true;
             }
-            // Se a URL atual nao eh mais um site suportado, provavelmente chegou no destino
-            if (!isSupportedHost(currentUrl) && currentUrl !== 'about:blank') {
-                return true;
+            // Se a URL atual nao eh mais um site suportado E temos uma URL final esperada diferente
+            if (!isSupportedHost(currentUrl) && currentUrl !== 'about:blank' && expectedFinalUrl) {
+                // Verifica se o dominio da URL atual corresponde ao da URL final esperada
+                try {
+                    const currentHost = new URL(currentUrl).hostname.toLowerCase();
+                    const finalHost = new URL(expectedFinalUrl).hostname.toLowerCase();
+                    if (currentHost === finalHost || currentHost.endsWith('.' + finalHost) || finalHost.endsWith('.' + currentHost)) {
+                        return true;
+                    }
+                } catch (e) {}
             }
             return false;
         } catch (e) { return false; }
+    }
+
+    // ============================================================
+    // Marca sucesso e encerra ciclo
+    // ============================================================
+    _resolveSuccess(id, inst, link, url, scheduler) {
+        if (inst.resolved) return;
+        inst.resolved = true;
+        if (inst.pollId) { clearTimeout(inst.pollId); inst.pollId = null; }
+        if (inst.timeoutId) { clearTimeout(inst.timeoutId); inst.timeoutId = null; }
+        this.log(id, 'success', `✅ SUCESSO — URL final: ${(url || '').substring(0, 70)}`);
+        this.stats.successCount++; this.stats.totalRuns++;
+        this._recordSuccess(link);
+        inst.status = 'view'; inst.phase = null; this._broadcastStatus();
+
+        inst.timeoutId = setTimeout(() => {
+            if (this.running && !inst.window.isDestroyed()) this._runCycle(id, { ...this.configStore.getAll(), links: this.configStore.get('links', []) }, inst.window, inst.session, inst.proxy);
+        }, scheduler.getViewTime());
     }
 
     async _runCycle(id, config, win, sess, currentProxy, isRetry = false) {
@@ -516,6 +560,8 @@ class FarmEngine {
         inst.finalUrl = null;
         inst.adClickAttempts = 0;
         inst.adClickCoords = [];
+        inst.currentCoordIndex = -1;
+        inst.lastAdClickCoords = null;
         this._broadcastStatus();
 
         const scheduler = new Scheduler(config, this.configStore);
@@ -585,7 +631,7 @@ class FarmEngine {
         await this._injectBypass(win);
 
         const startTime = Date.now();
-        const TIMEOUT_MS = 60000; // Aumentado para 60s por causa do clique no anuncio
+        const TIMEOUT_MS = 90000; // 90s timeout
 
         const doPoll = async () => {
             if (inst.resolved || !this.running || win.isDestroyed()) return;
@@ -593,114 +639,100 @@ class FarmEngine {
             const url = await this._readCurrentUrl(win);
             if (inst.resolved) return;
 
-            // NOVO: Detecta fase atual pelo texto "X/Y" na pagina
+            // Detecta fase atual pelo texto "X/Y" na pagina
             const pagePhase = await this._detectPhaseFromPage(win);
             if (pagePhase && !inst.resolved) {
-                inst.phase = { current: pagePhase.current, total: pagePhase.total };
+                inst.phase = { current: pagePhase.current, total: pagePhase.total, text: pagePhase.text };
                 this._broadcastStatus();
             }
 
-            // NOVO: Le a URL final esperada do state
+            // Le a URL final esperada do state
             const expectedFinalUrl = await this._readFinalUrl(win);
             if (expectedFinalUrl && !inst.finalUrl) {
                 inst.finalUrl = expectedFinalUrl;
                 this.log(id, 'info', `📌 URL final esperada: ${expectedFinalUrl.substring(0, 60)}`);
+                this._broadcastStatus();
             }
 
-            // NOVO: Verifica se chegou na URL final (CRITERIO DE SUCESSO PRINCIPAL)
+            // Le URL aberta via window.open
+            const openedUrl = await this._readOpenedUrl(win);
+            if (openedUrl && !inst.finalUrl) {
+                inst.finalUrl = openedUrl;
+                this.log(id, 'info', `📌 URL capturada (window.open): ${openedUrl.substring(0, 60)}`);
+                this._broadcastStatus();
+            }
+
+            // ===== CRITERIO UNICO DE SUCESSO: estar na URL final =====
             const reachedFinal = await this._checkReachedFinalUrl(win, inst.finalUrl);
             if (reachedFinal && !inst.resolved) {
-                inst.resolved = true;
-                if (inst.pollId) { clearTimeout(inst.pollId); inst.pollId = null; }
-                if (inst.timeoutId) { clearTimeout(inst.timeoutId); inst.timeoutId = null; }
-                this.log(id, 'success', `✅ SUCESSO — Chegou na URL final: ${url.substring(0, 70)}`);
-                this.stats.successCount++; this.stats.totalRuns++;
-                this._recordSuccess(link);
-                inst.status = 'view'; inst.phase = null; this._broadcastStatus();
-
-                inst.timeoutId = setTimeout(() => {
-                    if (this.running && !win.isDestroyed()) this._runCycle(id, config, win, sess, currentProxy);
-                }, scheduler.getViewTime());
+                this._resolveSuccess(id, inst, link, url, scheduler);
                 return;
             }
 
-            // Fallback: URL mudou para fora do site suportado (sem URL final conhecida)
-            if (url && !isSupportedHost(url) && url !== 'about:blank' && !inst.resolved) {
-                inst.resolved = true;
-                if (inst.pollId) { clearTimeout(inst.pollId); inst.pollId = null; }
-                if (inst.timeoutId) { clearTimeout(inst.timeoutId); inst.timeoutId = null; }
-                this.log(id, 'success', `✅ SUCESSO (fallback) — Destino: ${url.substring(0, 70)}`);
-                this.stats.successCount++; this.stats.totalRuns++;
-                this._recordSuccess(link);
-                inst.status = 'view'; inst.phase = null; this._broadcastStatus();
+            // Se ja temos URL final mas ainda nao chegamos, continua tentando (nao marca sucesso ainda)
 
-                inst.timeoutId = setTimeout(() => {
-                    if (this.running && !win.isDestroyed()) this._runCycle(id, config, win, sess, currentProxy);
-                }, scheduler.getViewTime());
-                return;
-            }
-
-            // NOVO: Tenta clicar no anuncio por coordenadas
+            // ===== TENTA CLICAR NO ANUNCIO POR COORDENADAS =====
             if (inst.adClickAttempts < inst.maxAdClickAttempts && !inst.resolved) {
                 inst.adClickAttempts++;
 
                 // Gera coordenadas na primeira tentativa
                 if (inst.adClickCoords.length === 0) {
                     inst.adClickCoords = await this._generateAdClickCoords(win);
-                    this.log(id, 'info', `🎯 Geradas ${inst.adClickCoords.length} coordenadas de clique candidatas`);
-                    // Log das coordenadas com destaque
+                    this.log(id, 'info', `🎯 ${inst.adClickCoords.length} coordenadas candidatas geradas`);
                     inst.adClickCoords.forEach((c, i) => {
-                        this.log(id, 'info', `   📍 [${i + 1}] (${c.x}, ${c.y}) — ${c.label} (${c.source})`);
+                        this.log(id, 'info', `   📍 [${i + 1}] (${c.x}, ${c.y}) — ${c.label}`);
                     });
+                    this._broadcastStatus();
                 }
 
                 if (inst.adClickCoords.length > 0) {
-                    const clicked = await this._tryAdClickCoordinates(win, inst.adClickCoords);
-                    if (clicked) {
-                        // Verifica novamente se chegou na URL final apos o click
-                        await this._sleep(2000);
-                        const postClickUrl = win.webContents.getURL();
-                        const postClickFinal = await this._checkReachedFinalUrl(win, inst.finalUrl);
-
-                        if (postClickFinal || (!isSupportedHost(postClickUrl) && postClickUrl !== 'about:blank')) {
-                            if (!inst.resolved) {
-                                inst.resolved = true;
-                                if (inst.pollId) { clearTimeout(inst.pollId); inst.pollId = null; }
-                                if (inst.timeoutId) { clearTimeout(inst.timeoutId); inst.timeoutId = null; }
-                                this.log(id, 'success', `✅ SUCESSO — Anuncio clicado, chegou em: ${postClickUrl.substring(0, 70)}`);
-                                this.stats.successCount++; this.stats.totalRuns++;
-                                this._recordSuccess(link);
-                                inst.status = 'view'; inst.phase = null; this._broadcastStatus();
-
-                                inst.timeoutId = setTimeout(() => {
-                                    if (this.running && !win.isDestroyed()) this._runCycle(id, config, win, sess, currentProxy);
-                                }, scheduler.getViewTime());
-                                return;
-                            }
+                    const result = await this._tryAdClickCoordinates(win, inst.adClickCoords, inst);
+                    
+                    // Se window.open capturou URL final
+                    if (result === 'opened' && inst.finalUrl && !inst.resolved) {
+                        const reached = await this._checkReachedFinalUrl(win, inst.finalUrl);
+                        if (reached) {
+                            this._resolveSuccess(id, inst, link, inst.finalUrl, scheduler);
+                            return;
                         }
+                    }
+                    
+                    // Se navegou para fora do site
+                    if (result === 'navigated' && inst.finalUrl && !inst.resolved) {
+                        const reached = await this._checkReachedFinalUrl(win, inst.finalUrl);
+                        if (reached) {
+                            this._resolveSuccess(id, inst, link, win.webContents.getURL(), scheduler);
+                            return;
+                        }
+                    }
+
+                    // Se ainda nao chegou na URL final, continua o poll (vai tentar mais coordenadas na proxima rodada)
+                    if (!inst.resolved) {
+                        this.log(id, 'info', `⏳ Coordenada nao abriu destino. Tentando proxima...`);
                     }
                 }
             }
 
+            // ===== TIMEOUT =====
             if (Date.now() - startTime > TIMEOUT_MS) {
                 if (inst.resolved) return;
                 inst.resolved = true;
                 if (inst.pollId) { clearTimeout(inst.pollId); inst.pollId = null; }
                 if (inst.timeoutId) { clearTimeout(inst.timeoutId); inst.timeoutId = null; }
-                this.log(id, 'error', '⏱ Timeout 60s. Pulando...');
+                this.log(id, 'error', `⏱ Timeout ${TIMEOUT_MS/1000}s. URL final nao alcancada.`);
                 this.stats.failCount++;
                 this._recordFail(link);
-                inst.phase = null; this._broadcastStatus();
+                inst.phase = null; inst.finalUrl = null; this._broadcastStatus();
                 inst.timeoutId = setTimeout(() => {
                     if (this.running && !win.isDestroyed()) this._runCycle(id, config, win, sess, currentProxy, true);
                 }, scheduler.getNextDelay());
                 return;
             }
 
-            inst.pollId = setTimeout(doPoll, 2500);
+            inst.pollId = setTimeout(doPoll, 3000);
         };
 
-        inst.pollId = setTimeout(doPoll, 2500);
+        inst.pollId = setTimeout(doPoll, 3000);
 
         inst.timeoutId = setTimeout(async () => {
             if (inst.resolved || !this.running || win.isDestroyed()) return;
@@ -711,20 +743,16 @@ class FarmEngine {
             // Ultima verificacao de URL final
             const finalCheck = await this._checkReachedFinalUrl(win, inst.finalUrl);
 
-            if (finalCheck || (url && !isSupportedHost(url) && url !== 'about:blank')) {
-                this.log(id, 'success', `✅ SUCESSO (late check): ${url.substring(0, 70)}`);
-                this.stats.successCount++; this.stats.totalRuns++;
-                this._recordSuccess(link);
-                inst.status = 'view'; inst.phase = null; this._broadcastStatus();
-                setTimeout(() => { if (this.running && !win.isDestroyed()) this._runCycle(id, config, win, sess, currentProxy); }, scheduler.getViewTime());
+            if (finalCheck) {
+                this._resolveSuccess(id, inst, link, url, scheduler);
             } else {
-                this.log(id, 'error', '⏱ Timeout final. Proximo...');
+                this.log(id, 'error', `⏱ Timeout final. URL final nao alcancada.`);
                 this.stats.failCount++;
                 this._recordFail(link);
-                inst.phase = null; this._broadcastStatus();
+                inst.phase = null; inst.finalUrl = null; this._broadcastStatus();
                 this._runCycle(id, config, win, sess, currentProxy, true);
             }
-        }, TIMEOUT_MS + 5000);
+        }, TIMEOUT_MS + 10000);
     }
 
     async stopAll() {
@@ -753,15 +781,17 @@ class FarmEngine {
             running: this.running,
             instances: Array.from(this.instances.entries()).map(([id, inst]) => ({
                 id, status: inst.status, cycle: inst.cycle,
-                currentLink: inst.currentLink || null, phase: inst.phase,
+                currentLink: inst.currentLink || null, 
+                phase: inst.phase,
                 proxy: inst.proxy ? this._formatLocation(inst.proxy) : 'direto',
                 proxyPing: inst.proxy ? inst.proxy.ping : null,
                 proxyTier: inst.proxy ? inst.proxy.tier : null,
                 fingerprint: inst.fingerprint?.userAgent?.substring(0, 35) + '...',
-                // NOVO: info extra no status
                 finalUrl: inst.finalUrl ? inst.finalUrl.substring(0, 40) + '...' : null,
                 adClickAttempts: inst.adClickAttempts,
-                adClickCoordsCount: inst.adClickCoords ? inst.adClickCoords.length : 0
+                adClickCoordsCount: inst.adClickCoords ? inst.adClickCoords.length : 0,
+                currentCoordIndex: inst.currentCoordIndex,
+                lastAdClickCoords: inst.lastAdClickCoords
             })),
             stats: {
                 ...this.stats,
