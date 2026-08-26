@@ -32,6 +32,7 @@ const els = {
     instancesList: document.getElementById('instances-list'),
     proxyList: document.getElementById('proxy-list'),
     proxyStats: document.getElementById('proxy-stats'),
+    topPoolList: document.getElementById('top-pool-list'),
     logsContainer: document.getElementById('logs-container'),
     globalStatus: document.getElementById('global-status'),
     uptime: document.getElementById('uptime'),
@@ -82,6 +83,8 @@ let heatmapData = Array(24).fill(0);
 let analyticsData = null;
 let autoSaveTimer = null;
 let isRunning = false;
+let topPoolData = [];
+let proxyStrikes = {};
 
 const DEFAULT_PEAKS = [5, 3, 2, 2, 3, 5, 10, 25, 55, 80, 90, 85, 75, 70, 75, 80, 85, 90, 95, 100, 85, 60, 30, 15];
 
@@ -156,7 +159,7 @@ function renderHeatmap() {
         const b = Math.round(38 * intensity + 30 * (1 - intensity));
         bar.style.height = `${Math.max(pct, 3)}%`;
         bar.style.background = `rgb(${r},${g},${b})`;
-        bar.title = `${String(i).padStart(2, '0')}:00 — ${Math.round(val)}%`;
+        bar.title = `TESTE ${String(i).padStart(2, '0')}:00 — ${Math.round(val)}%`;
 
         let dragging = false;
 
@@ -248,7 +251,6 @@ function writeConfig(cfg) {
     }
     renderHeatmap();
 
-    // Gerais
     els.cfg.instances.value = cfg.instances || 3;
     els.cfg.headless.value = cfg.headless ? 'true' : 'false';
     els.cfg.minDelay.value = cfg.minDelay || 5000;
@@ -264,18 +266,15 @@ function writeConfig(cfg) {
     els.cfg.goalEnabled.value = goal.enabled ? 'true' : 'false';
     els.cfg.goalAmount.value = goal.amount || 50;
 
-    // Blacklist
     const bl = cfg.blacklist || { enabled: true, maxFails: 5, cooldownMinutes: 30 };
     els.cfg.blacklistEnabled.value = bl.enabled ? 'true' : 'false';
     els.cfg.blacklistMax.value = bl.maxFails || 5;
     els.cfg.blacklistCooldown.value = bl.cooldownMinutes || 30;
 
-    // Cooldown
     const cd = cfg.linkCooldown || { enabled: true, minutes: 10 };
     els.cfg.cooldownEnabled.value = cd.enabled ? 'true' : 'false';
     els.cfg.cooldownMin.value = cd.minutes || 10;
 
-    // Webhook
     const wh = cfg.webhook || { enabled: false, type: 'discord', url: '', botToken: '', chatId: '' };
     els.cfg.webhookEnabled.value = wh.enabled ? 'true' : 'false';
     els.cfg.webhookType.value = wh.type || 'discord';
@@ -400,25 +399,65 @@ els.cfg.profileSelect.addEventListener('change', async () => {
 });
 
 // ============ PROXY RENDERER ============
-function renderProxies(list) {
-    els.proxyStats.textContent = `${(list || []).length} proxies carregados`;
+function renderProxies(list, topPool, strikes) {
+    topPoolData = topPool || [];
+    proxyStrikes = strikes || {};
+
+    // Top Pool
+    if (els.topPoolList) {
+        if (!topPool || topPool.length === 0) {
+            els.topPoolList.innerHTML = '<div class="empty-state">Top pool vazio — aguardando scan...</div>';
+        } else {
+            els.topPoolList.innerHTML = `
+                <div class="top-pool-header">🏆 Top ${topPool.length} Elite</div>
+                <div class="top-pool-grid">
+                    ${topPool.map((p, i) => {
+                        const g = p.geo || {};
+                        const loc = [g.city, g.region].filter(Boolean).join(', ') || g.country || '?';
+                        const tierColor = p.tier === 1 ? '#22c55e' : p.tier === 2 ? '#f59e0b' : p.tier === 3 ? '#f97316' : '#ef4444';
+                        return `
+                        <div class="top-pool-item" style="border-color:${tierColor}">
+                            <div class="top-pool-rank">#${i + 1}</div>
+                            <div class="top-pool-flag">${g.flag || '🌐'}</div>
+                            <div class="top-pool-loc">${loc}</div>
+                            <div class="top-pool-ping" style="color:${tierColor}">${p.ping}ms</div>
+                            <div class="top-pool-addr">${p.ip}:${p.port}</div>
+                        </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+        }
+    }
+
+    // Pool geral
+    els.proxyStats.textContent = `${(list || []).length} proxies carregados · Top: ${(topPool || []).length}`;
     if (!list || list.length === 0) {
         els.proxyList.innerHTML = '<div class="empty-state">Buscando proxies automaticamente...</div>';
         return;
     }
+
+    const topKeys = new Set((topPool || []).map(p => `${p.protocol}://${p.ip}:${p.port}`));
+
     els.proxyList.innerHTML = list.map(p => {
         const g = p.geo || {};
         const loc = [g.city, g.region, g.country].filter(Boolean).join(', ');
         const tierColor = p.tier === 1 ? '#22c55e' : p.tier === 2 ? '#f59e0b' : p.tier === 3 ? '#f97316' : '#ef4444';
         const statusDot = p.alive !== false ? '●' : '○';
         const statusColor = p.alive !== false ? '#22c55e' : '#ef4444';
+        const key = `${p.protocol}://${p.ip}:${p.port}`;
+        const isTop = topKeys.has(key);
+        const strike = proxyStrikes[key];
+        const strikeCount = strike ? strike.count : 0;
+        const strikeDots = strikeCount > 0 ? '⚠'.repeat(strikeCount) : '';
+
         return `
-        <div class="proxy-chip" style="border-left-color:${tierColor}">
+        <div class="proxy-chip ${isTop ? 'proxy-top' : ''}" style="border-left-color:${tierColor}">
             <div class="proxy-info">
                 <span class="proxy-flag">${g.flag || '🌐'}</span>
                 <div class="proxy-details">
-                    <div class="proxy-addr">${p.protocol}://${p.ip}:${p.port}</div>
-                    <div class="proxy-loc">${loc} (${g.countryCode || '??'})</div>
+                    <div class="proxy-addr">${p.protocol}://${p.ip}:${p.port} ${isTop ? '<span class="proxy-top-badge">TOP</span>' : ''}</div>
+                    <div class="proxy-loc">${loc} (${g.countryCode || '??'}) ${strikeDots ? `<span class="proxy-strikes">${strikeDots}</span>` : ''}</div>
                 </div>
             </div>
             <div class="proxy-meta">
@@ -451,7 +490,7 @@ els.healthCheck.addEventListener('click', async () => {
         els.healthCheck.textContent = '⏳ Verificando...';
         await window.electronAPI.healthCheckProxies();
         const list = await window.electronAPI.listProxies();
-        renderProxies(list);
+        renderProxies(list, topPoolData, proxyStrikes);
         els.healthCheck.textContent = '❤️ Health Check';
         els.healthCheck.disabled = false;
     } catch (e) {
@@ -479,7 +518,6 @@ function renderInstances(data) {
         return;
     }
     els.instancesList.innerHTML = instances.map(inst => {
-        // Fase atual com destaque
         let phaseText = '...';
         if (inst.phase && inst.phase.text) {
             phaseText = `<span class="phase-badge">📍 ${inst.phase.text}</span>`;
@@ -487,16 +525,18 @@ function renderInstances(data) {
             phaseText = '👁 View';
         }
 
-        // Coordenada sendo testada com destaque
         let coordText = '';
+        let clickingIndicator = '';
         if (inst.lastAdClickCoords) {
             const c = inst.lastAdClickCoords;
             coordText = `<span class="coord-badge">🎯 (${c.x}, ${c.y}) [${c.label}]</span>`;
+            if (inst.status === 'bypassing') {
+                clickingIndicator = `<span class="clicking-indicator">● clicando</span>`;
+            }
         } else if (inst.adClickCoordsCount > 0) {
             coordText = `<span class="coord-badge">🎯 ${inst.adClickCoordsCount} coords prontas</span>`;
         }
 
-        // URL final
         let finalUrlText = '';
         if (inst.finalUrl) {
             finalUrlText = `<span class="finalurl-badge">📌 ${inst.finalUrl}</span>`;
@@ -504,18 +544,19 @@ function renderInstances(data) {
 
         const pingText = inst.proxyPing ? `${inst.proxyPing}ms` : '';
         const tierText = inst.proxyTier ? `T${inst.proxyTier}` : '';
+
         return `
         <div class="instance-row">
             <div class="instance-id">#${(inst.id || 0) + 1}</div>
             <div class="instance-info">
-                <div class="instance-status ${inst.status || 'idle'}">${(inst.status || 'idle').toUpperCase()}</div>
+                <div class="instance-status ${inst.status || 'idle'}">${(inst.status || 'idle').toUpperCase()} ${clickingIndicator}</div>
                 <div class="instance-link">${inst.currentLink || 'Aguardando...'}</div>
                 <div class="instance-phase">${phaseText}</div>
                 <div class="instance-coord">${coordText}</div>
                 <div class="instance-finalurl">${finalUrlText}</div>
             </div>
             <div class="instance-meta">
-                <div class="instance-proxy">${inst.proxy || 'direto'}</div>
+                <div class="instance-proxy">${inst.proxyUrl ? '📌 '+ inst.proxyUrl + ' - ' : ''}${inst.proxy || ' Sem proxy ⚠'}</div>
                 <div class="instance-ping">${pingText} ${tierText}</div>
                 <div class="instance-fp">${inst.fingerprint || ''}</div>
             </div>
@@ -685,7 +726,7 @@ els.refreshProxies.addEventListener('click', async () => {
     try {
         els.refreshProxies.disabled = true; els.refreshProxies.textContent = '⏳ Testando...';
         const list = await window.electronAPI.refreshProxies();
-        renderProxies(list);
+        renderProxies(list, topPoolData, proxyStrikes);
     } catch (e) { alert('Erro: ' + e.message); }
     finally { els.refreshProxies.disabled = false; els.refreshProxies.textContent = '🔄 Atualizar & Testar'; }
 });
@@ -699,7 +740,11 @@ els.clearLogs.addEventListener('click', async () => {
 window.electronAPI.onConfigLoaded((cfg) => writeConfig(cfg));
 window.electronAPI.onStatusUpdate((data) => renderInstances(data));
 window.electronAPI.onLog((entry) => appendLog(entry));
-window.electronAPI.onProxyUpdated((list) => renderProxies(list));
+window.electronAPI.onProxyUpdated((list) => renderProxies(list, topPoolData, proxyStrikes));
+window.electronAPI.onTopPoolUpdated((topPool) => {
+    topPoolData = topPool;
+    renderProxies(window.lastProxyList || [], topPool, proxyStrikes);
+});
 
 // ============ INIT ============
 (async () => {
@@ -707,14 +752,19 @@ window.electronAPI.onProxyUpdated((list) => renderProxies(list));
         const cfg = await window.electronAPI.loadConfig();
         writeConfig(cfg);
         const proxies = await window.electronAPI.listProxies();
-        renderProxies(proxies);
+        window.lastProxyList = proxies;
+        renderProxies(proxies, topPoolData, proxyStrikes);
         await renderAnalytics();
         await renderProfiles();
     } catch (e) { console.error('Init error:', e); }
 })();
 
 setInterval(async () => {
-    try { const proxies = await window.electronAPI.listProxies(); renderProxies(proxies); }
+    try { 
+        const proxies = await window.electronAPI.listProxies(); 
+        window.lastProxyList = proxies;
+        renderProxies(proxies, topPoolData, proxyStrikes); 
+    }
     catch (e) { }
 }, 10000);
 

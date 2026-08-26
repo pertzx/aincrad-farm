@@ -1,4 +1,3 @@
-
 const { app, BrowserWindow, ipcMain, session, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 
@@ -49,17 +48,16 @@ function createMainWindow() {
 }
 
 function createTray() {
-    // Cria ícone simples em memória se não existir arquivo
     let trayIcon;
     try {
         trayIcon = nativeImage.createFromPath(path.join(__dirname, 'renderer', 'icon.png'));
     } catch {
         trayIcon = nativeImage.createEmpty();
     }
-    
+
     tray = new Tray(trayIcon.resize({ width: 16, height: 16 }));
     tray.setToolTip('GS Farm');
-    
+
     const contextMenu = Menu.buildFromTemplate([
         { label: 'Abrir Dashboard', click: () => { if (mainWindow) mainWindow.show(); } },
         { type: 'separator' },
@@ -79,7 +77,7 @@ function createTray() {
         }}
     ]);
     tray.setContextMenu(contextMenu);
-    
+
     tray.on('click', () => {
         if (mainWindow) {
             if (mainWindow.isVisible()) mainWindow.hide();
@@ -90,7 +88,8 @@ function createTray() {
 
 app.whenReady().then(() => {
     configStore = new ConfigStore(CONFIG_PATH);
-    proxyManager = new ProxyManager(configStore.get('proxyTimeout', 8000));
+    // Passa configStore pro ProxyManager pra persistir proxies
+    proxyManager = new ProxyManager(configStore, configStore.get('proxyTimeout', 8000));
     farmEngine = new FarmEngine(configStore, proxyManager);
 
     // ===== FARM =====
@@ -142,7 +141,7 @@ app.whenReady().then(() => {
         catch (e) { return false; }
     });
     ipcMain.handle('config:load', async () => configStore.getAll());
-    
+
     // Perfis/Campanhas
     ipcMain.handle('profile:save', async (event, name, cfg) => {
         const profiles = configStore.get('profiles', {});
@@ -182,12 +181,12 @@ app.whenReady().then(() => {
         stats[link].success++;
         stats[link].lastSuccess = new Date().toISOString();
         configStore.set('linkStats', stats);
-        
+
         const daily = configStore.get('dailyStats', {});
         if (!daily[today]) daily[today] = { success: 0, fail: 0 };
         daily[today].success++;
         configStore.set('dailyStats', daily);
-        
+
         configStore.set('totalSuccess', (configStore.get('totalSuccess', 0) + 1));
         return true;
     });
@@ -197,12 +196,12 @@ app.whenReady().then(() => {
         if (!stats[link]) stats[link] = { success: 0, fail: 0, lastSuccess: null };
         stats[link].fail++;
         configStore.set('linkStats', stats);
-        
+
         const daily = configStore.get('dailyStats', {});
         if (!daily[today]) daily[today] = { success: 0, fail: 0 };
         daily[today].fail++;
         configStore.set('dailyStats', daily);
-        
+
         configStore.set('totalFail', (configStore.get('totalFail', 0) + 1));
         return true;
     });
