@@ -5,9 +5,31 @@ const { URL } = require('url');
 const PROXY_LIST_URL = 'https://raw.githubusercontent.com/iplocate/free-proxy-list/main/all-proxies.txt';
 const TOP_POOL_SIZE = 10;
 const STRIKE_MAX = 3;
-const STRIKE_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutos
-const HEALTH_CHECK_INTERVAL_MS = 60 * 1000; // 60 segundos
-const HEALTH_CHECK_TIMEOUT = 3000; // 3s para health check das top 10
+const STRIKE_COOLDOWN_MS = 5 * 60 * 1000;
+const HEALTH_CHECK_INTERVAL_MS = 60 * 1000;
+const HEALTH_CHECK_TIMEOUT = 3000;
+
+const PROXY_MALICIOUS_KEYWORDS = [
+    'access denied', 'blocked', 'banned', 'forbidden', 'unauthorized',
+    'captcha', 'recaptcha', 'hcaptcha', 'turnstile',
+    'proxy detected', 'proxy ban', 'vpn detected', 'vpn ban',
+    'suspicious activity', 'automated access', 'bot detected',
+    'please wait', 'checking your browser', 'ddos protection',
+    'cloudflare', 'incapsula', 'sucuri', 'akamai',
+    'rate limit', 'too many requests', '429',
+    'security check', 'verification required',
+    'your ip has been blocked', 'ip blocked',
+    'this proxy is', 'free proxy', 'public proxy',
+    'advertisement', 'sponsored', 'ad served by',
+    'redirecting', 'click here to continue',
+    'warning', 'alert', 'notice', 'attention required',
+    // >>> PROXY DEBUG/ECHO <<<
+    'REMOTE_ADDR', 'REMOTE_PORT', 'REQUEST_METHOD', 'REQUEST_URI',
+    'REQUEST_TIME', 'HTTP_HOST', 'HTTP_USER_AGENT', 'HTTP_ACCEPT',
+    'HTTP_REFERER', 'HTTP_CONNECTION', 'HTTP_ACCEPT_ENCODING',
+    'HTTP_ACCEPT_LANGUAGE', 'HTTP_SEC_FETCH', 'HTTP_UPGRADE_INSECURE_REQUESTS',
+    'HTTP_PRIORITY'
+];
 
 function countryCodeToEmoji(code) {
     if (!code || code.length !== 2) return '🌐';
@@ -34,9 +56,11 @@ class ProxyManager {
         this.configStore = configStore;
         this.timeout = timeout;
         this.geoCache = new Map();
-        this.proxies = [];        // pool geral (todas as que funcionaram)
-        this.topPool = [];        // pool elite: só as TOP_POOL_SIZE mais rápidas
-        this.strikes = new Map(); // Map<proxyKey, {count, lastStrike}>
+        this.proxies = [];
+        this.topPool = [];
+        this.strikes = new Map();
+        this.blacklist = new Set();
+        this.blacklistReasons = new Map();
         this.lastFetch = 0;
         this.isScanning = false;
         this.scanTimer = null;
@@ -46,6 +70,7 @@ class ProxyManager {
         this._geoRunning = false;
 
         this._loadSavedProxies();
+        this._loadBlacklist();
         this._rebuildTopPool();
     }
 
@@ -61,11 +86,20 @@ class ProxyManager {
             this.proxies = fresh;
             console.log(`[ProxyManager] ${fresh.length} proxies carregadas do cache`);
         }
-        // Carrega strikes salvos
         const savedStrikes = this.configStore.get('proxyStrikes', {});
         for (const [key, val] of Object.entries(savedStrikes)) {
             this.strikes.set(key, val);
         }
+    }
+
+    _loadBlacklist() {
+        const saved = this.configStore.get('proxyBlacklist', []);
+        const savedReasons = this.configStore.get('proxyBlacklistReasons', {});
+        for (const key of saved) this.blacklist.add(key);
+        for (const [key, val] of Object.entries(savedReasons)) {
+            this.blacklistReasons.set(key, val);
+        }
+        console.log(`[ProxyManager] ${this.blacklist.size} proxies na blacklist carregadas`);
     }
 
     _saveProxies() {
@@ -73,33 +107,126 @@ class ProxyManager {
             ...p,
             lastTested: p.lastTested || Date.now()
         })));
-        // Salva strikes
         const strikesObj = {};
-        for (const [key, val] of this.strikes) {
-            strikesObj[key] = val;
-        }
+        for (const [key, val] of this.strikes) strikesObj[key] = val;
         this.configStore.set('proxyStrikes', strikesObj);
     }
 
-    // ============================================================
-    // REBUILD TOP POOL: mantém só as 10 mais rápidas sem strikes
-    // ============================================================
+    _saveBlacklist() {
+        const arr = Array.from(this.blacklist);
+        const reasonsObj = {};
+        for (const [key, val] of this.blacklistReasons) {
+            reasonsObj[key] = val;
+        }
+        this.configStore.set('proxyBlacklist', arr);
+        this.configStore.set('proxyBlacklistReasons', reasonsObj);
+        // Força escrita no disco
+        if (this.configStore._saveSync) {
+            try { this.configStore._saveSync(); } catch (e) { }
+        }
+        console.log(`[ProxyManager] Blacklist salva: ${arr.length} proxies`);
+    }
+
+    blacklistProxy(proxy, reason = 'manual') {
+        const key = this._proxyKey(proxy);
+        if (this.blacklist.has(key)) return false;
+
+        this.blacklist.add(key);
+        this.blacklistReasons.set(key, {
+            reason,
+            timestamp: Date.now(),
+            ip: proxy.ip,
+            port: proxy.port,
+            protocol: proxy.protocol
+        });
+
+        this.proxies = this.proxies.filter(p => this._proxyKey(p) !== key);
+        this.topPool = this.topPool.filter(p => this._proxyKey(p) !== key);
+
+        console.log(`[ProxyManager] ⛔ PROXY BLACKLISTED: ${key} | Motivo: ${reason}`);
+        this._saveBlacklist();
+        this._saveProxies();
+        this._broadcast('proxy:updated', this.proxies);
+        this._broadcast('proxy:blacklist-updated', this.getBlacklist());
+        return true;
+    }
+
+    unblacklistProxy(proxy) {
+        const key = this._proxyKey(proxy);
+        if (!this.blacklist.has(key)) return false;
+
+        this.blacklist.delete(key);
+        this.blacklistReasons.delete(key);
+        this.strikes.delete(key);
+
+        console.log(`[ProxyManager] ✅ PROXY UNBLACKLISTED: ${key}`);
+        this._saveBlacklist();
+        this._broadcast('proxy:blacklist-updated', this.getBlacklist());
+        return true;
+    }
+
+    isBlacklisted(proxy) {
+        return this.blacklist.has(this._proxyKey(proxy));
+    }
+
+    getBlacklist() {
+        const result = [];
+        for (const key of this.blacklist) {
+            const reason = this.blacklistReasons.get(key);
+            result.push({
+                key,
+                ip: reason?.ip,
+                port: reason?.port,
+                protocol: reason?.protocol,
+                reason: reason?.reason || 'unknown',
+                timestamp: reason?.timestamp || 0,
+                date: reason ? new Date(reason.timestamp).toLocaleString('pt-BR') : '?'
+            });
+        }
+        return result.sort((a, b) => b.timestamp - a.timestamp);
+    }
+
+    _isResponseTampered(data) {
+        if (!data || typeof data !== 'string') return { tampered: true, reason: 'empty_response' };
+
+        const lower = data.toLowerCase();
+
+        try {
+            const json = JSON.parse(data);
+            if (json.origin && typeof json.origin === 'string') {
+                return { tampered: false, reason: null };
+            }
+        } catch (e) { }
+
+        for (const keyword of PROXY_MALICIOUS_KEYWORDS) {
+            if (lower.includes(keyword)) {
+                return { tampered: true, reason: `keyword_detected: ${keyword}` };
+            }
+        }
+
+        if (data.length < 10) return { tampered: true, reason: 'response_too_short' };
+        if (data.length > 5000 && !data.trim().startsWith('{')) {
+            return { tampered: true, reason: 'unexpected_html_response' };
+        }
+
+        return { tampered: false, reason: null };
+    }
+
     _rebuildTopPool() {
         const now = Date.now();
 
-        // Limpa strikes expirados
         for (const [key, val] of this.strikes) {
             if (now - val.lastStrike > STRIKE_COOLDOWN_MS) {
                 this.strikes.delete(key);
             }
         }
 
-        // Filtra proxies que não estão em strike
         const available = this.proxies.filter(p => {
             const key = this._proxyKey(p);
+            if (this.blacklist.has(key)) return false;
+
             const s = this.strikes.get(key);
             if (!s) return true;
-            // Se passou o cooldown, reseta
             if (now - s.lastStrike > STRIKE_COOLDOWN_MS) {
                 this.strikes.delete(key);
                 return true;
@@ -107,7 +234,6 @@ class ProxyManager {
             return s.count < STRIKE_MAX;
         });
 
-        // Pega as 10 mais rápidas
         this.topPool = available
             .sort((a, b) => a.ping - b.ping)
             .slice(0, TOP_POOL_SIZE);
@@ -116,29 +242,27 @@ class ProxyManager {
         this._broadcast('proxy:top-updated', this.topPool);
     }
 
-    // ============================================================
-    // Adiciona strike numa proxy (chamado pelo engine quando detecta falha)
-    // ============================================================
-    addStrike(proxy) {
+    addStrike(proxy, reason = 'generic') {
         const key = this._proxyKey(proxy);
         const now = Date.now();
         const existing = this.strikes.get(key);
 
         if (existing && now - existing.lastStrike > STRIKE_COOLDOWN_MS) {
-            // Resetou o cooldown, começa do zero
-            this.strikes.set(key, { count: 1, lastStrike: now });
+            this.strikes.set(key, { count: 1, lastStrike: now, reasons: [reason] });
         } else if (existing) {
             existing.count++;
             existing.lastStrike = now;
+            if (!existing.reasons) existing.reasons = [];
+            existing.reasons.push(reason);
         } else {
-            this.strikes.set(key, { count: 1, lastStrike: now });
+            this.strikes.set(key, { count: 1, lastStrike: now, reasons: [reason] });
         }
 
         const current = this.strikes.get(key);
-        console.log(`[ProxyManager] Strike ${current.count}/${STRIKE_MAX} em ${key}`);
+        console.log(`[ProxyManager] Strike ${current.count}/${STRIKE_MAX} em ${key} (${reason})`);
 
         if (current.count >= STRIKE_MAX) {
-            console.log(`[ProxyManager] ⛔ ${key} removida do top pool por ${STRIKE_COOLDOWN_MS/60000}min`);
+            console.log(`[ProxyManager] ⛔ ${key} removida do top pool por ${STRIKE_COOLDOWN_MS / 60000}min`);
         }
 
         this._saveProxies();
@@ -158,9 +282,6 @@ class ProxyManager {
         if (this.healthTimer) { clearInterval(this.healthTimer); this.healthTimer = null; }
     }
 
-    // ============================================================
-    // HEALTH CHECK DAS TOP 10 a cada 60s com timeout de 3s
-    // ============================================================
     _startHealthCheck() {
         if (this.healthTimer) clearInterval(this.healthTimer);
         this.healthTimer = setInterval(async () => {
@@ -175,9 +296,8 @@ class ProxyManager {
             for (let i = 0; i < results.length; i++) {
                 if (!results[i].ok) {
                     dead.push(this.topPool[i]);
-                    this.addStrike(this.topPool[i]);
+                    this.addStrike(this.topPool[i], 'health_check_fail');
                 } else {
-                    // Atualiza ping
                     this.topPool[i].ping = results[i].ping;
                 }
             }
@@ -190,7 +310,6 @@ class ProxyManager {
         }, HEALTH_CHECK_INTERVAL_MS);
     }
 
-    // Ping rápido (só verifica se responde)
     _pingProxy(proxy, customTimeout) {
         const start = Date.now();
         return new Promise((resolve) => {
@@ -206,6 +325,13 @@ class ProxyManager {
                 res.on('data', chunk => data += chunk);
                 res.on('end', () => {
                     try {
+                        const tamperCheck = this._isResponseTampered(data);
+                        if (tamperCheck.tampered) {
+                            console.log(`[ProxyManager] 🚨 Proxy ${proxy.ip}:${proxy.port} modificou resposta: ${tamperCheck.reason}`);
+                            this.blacklistProxy(proxy, `tampered_ping: ${tamperCheck.reason}`);
+                            resolve({ ok: false, tampered: true, reason: tamperCheck.reason });
+                            return;
+                        }
                         JSON.parse(data);
                         resolve({ ok: true, ping: Date.now() - start });
                     } catch {
@@ -248,6 +374,11 @@ class ProxyManager {
             if (working.length > 0) {
                 for (const p of working) {
                     const key = this._proxyKey(p);
+                    if (this.blacklist.has(key)) {
+                        console.log(`[ProxyManager] Ignorando proxy blacklisted: ${key}`);
+                        continue;
+                    }
+
                     const existing = existingMap.get(key);
                     if (existing) {
                         existing.ping = p.ping;
@@ -285,7 +416,7 @@ class ProxyManager {
         this._processGeoQueue();
 
         this.lastFetch = Date.now();
-        console.log(`[ProxyManager] Scan completo: ${this.proxies.length} total, ${this.topPool.length} no top pool`);
+        console.log(`[ProxyManager] Scan completo: ${this.proxies.length} total, ${this.topPool.length} no top pool, ${this.blacklist.size} na blacklist`);
         return this.proxies;
     }
 
@@ -405,11 +536,24 @@ class ProxyManager {
                 res.on('data', chunk => data += chunk);
                 res.on('end', () => {
                     try {
+                        const tamperCheck = this._isResponseTampered(data);
+                        if (tamperCheck.tampered) {
+                            console.log(`[ProxyManager] 🚨 Proxy ${proxy.ip}:${proxy.port} modificou resposta no teste: ${tamperCheck.reason}`);
+                            this.blacklistProxy(proxy, `tampered_test: ${tamperCheck.reason}`);
+                            proxy.working = false;
+                            proxy.alive = false;
+                            proxy.tampered = true;
+                            proxy.tamperReason = tamperCheck.reason;
+                            resolve(proxy);
+                            return;
+                        }
+
                         const json = JSON.parse(data);
                         proxy.working = true;
                         proxy.alive = true;
                         proxy.origin = json.origin;
                         proxy.ping = Date.now() - start;
+                        proxy.tampered = false;
                         if (proxy.ping < 1500) proxy.tier = 1;
                         else if (proxy.ping < 4000) proxy.tier = 2;
                         else if (proxy.ping < 8000) proxy.tier = 3;
@@ -451,14 +595,14 @@ class ProxyManager {
         return this.topPool;
     }
 
-    // ============================================================
-    // PICK: aleatório entre as TOP 10
-    // ============================================================
     pickWeighted() {
         if (this.topPool.length === 0) {
-            // Fallback: se top pool vazio, tenta o pool geral
             if (this.proxies.length === 0) return null;
-            const fast = this.proxies.sort((a, b) => a.ping - b.ping).slice(0, TOP_POOL_SIZE);
+            const fast = this.proxies
+                .filter(p => !this.blacklist.has(this._proxyKey(p)))
+                .sort((a, b) => a.ping - b.ping)
+                .slice(0, TOP_POOL_SIZE);
+            if (fast.length === 0) return null;
             return fast[Math.floor(Math.random() * fast.length)];
         }
         return this.topPool[Math.floor(Math.random() * this.topPool.length)];

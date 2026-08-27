@@ -412,10 +412,10 @@ function renderProxies(list, topPool, strikes) {
                 <div class="top-pool-header">🏆 Top ${topPool.length} Elite</div>
                 <div class="top-pool-grid">
                     ${topPool.map((p, i) => {
-                        const g = p.geo || {};
-                        const loc = [g.city, g.region].filter(Boolean).join(', ') || g.country || '?';
-                        const tierColor = p.tier === 1 ? '#22c55e' : p.tier === 2 ? '#f59e0b' : p.tier === 3 ? '#f97316' : '#ef4444';
-                        return `
+                const g = p.geo || {};
+                const loc = [g.city, g.region].filter(Boolean).join(', ') || g.country || '?';
+                const tierColor = p.tier === 1 ? '#22c55e' : p.tier === 2 ? '#f59e0b' : p.tier === 3 ? '#f97316' : '#ef4444';
+                return `
                         <div class="top-pool-item" style="border-color:${tierColor}">
                             <div class="top-pool-rank">#${i + 1}</div>
                             <div class="top-pool-flag">${g.flag || '🌐'}</div>
@@ -424,7 +424,7 @@ function renderProxies(list, topPool, strikes) {
                             <div class="top-pool-addr">${p.ip}:${p.port}</div>
                         </div>
                         `;
-                    }).join('')}
+            }).join('')}
                 </div>
             `;
         }
@@ -465,7 +465,10 @@ function renderProxies(list, topPool, strikes) {
                 <span class="proxy-ping" style="color:${tierColor}">${p.ping}ms</span>
                 <span class="proxy-tier">T${p.tier}</span>
             </div>
-            <button class="btn-trace" data-proxy='${JSON.stringify(p).replace(/'/g, "&#39;")}'>🔍 Rastrear</button>
+            <div class="proxy-actions">
+                <button class="btn-trace" data-proxy='${JSON.stringify(p).replace(/'/g, "&#39;")}'>🔍 Rastrear</button>
+                <button class="btn-blacklist" data-proxy='${JSON.stringify(p).replace(/'/g, "&#39;")}'>⛔ Blacklist</button>
+            </div>
         </div>
     `}).join('');
 
@@ -479,6 +482,37 @@ function renderProxies(list, topPool, strikes) {
             } catch (e) {
                 btn.textContent = '❌';
                 setTimeout(() => btn.textContent = '🔍 Rastrear', 2000);
+            }
+        });
+    });
+
+    document.querySelectorAll('.btn-blacklist').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const proxy = JSON.parse(btn.dataset.proxy);
+            if (!confirm(`Blacklistar ${proxy.ip}:${proxy.port} permanentemente?`)) return;
+            try {
+                btn.textContent = '⏳';
+                btn.disabled = true;
+                const ok = await window.electronAPI.blacklistProxy(proxy);
+                if (ok) {
+                    btn.textContent = '⛔ BANIDA';
+                    const chip = btn.closest('.proxy-chip');
+                    if (chip) {
+                        chip.style.opacity = '0.3';
+                        chip.style.filter = 'grayscale(100%)';
+                    }
+                    // Atualiza a aba de blacklist imediatamente
+                    await renderBlacklist();
+                    // Mostra toast
+                    showToast(`⛔ Proxy ${proxy.ip}:${proxy.port} blacklisted!`, 'error');
+                } else {
+                    btn.textContent = '⛔ Blacklist';
+                    btn.disabled = false;
+                }
+            } catch (e) {
+                console.error('Blacklist error:', e);
+                btn.textContent = '❌ Erro';
+                setTimeout(() => { btn.textContent = '⛔ Blacklist'; btn.disabled = false; }, 2000);
             }
         });
     });
@@ -556,7 +590,7 @@ function renderInstances(data) {
                 <div class="instance-finalurl">${finalUrlText}</div>
             </div>
             <div class="instance-meta">
-                <div class="instance-proxy">${inst.proxyUrl ? '📌 '+ inst.proxyUrl + ' - ' : ''}${inst.proxy || ' Sem proxy ⚠'}</div>
+                <div class="instance-proxy">${inst.proxyUrl ? '📌 ' + inst.proxyUrl + ' - ' : ''}${inst.proxy || ' Sem proxy ⚠'}</div>
                 <div class="instance-ping">${pingText} ${tierText}</div>
                 <div class="instance-fp">${inst.fingerprint || ''}</div>
             </div>
@@ -746,6 +780,90 @@ window.electronAPI.onTopPoolUpdated((topPool) => {
     renderProxies(window.lastProxyList || [], topPool, proxyStrikes);
 });
 
+// ============ BLACKLIST RENDERER ============
+let blacklistData = [];
+
+async function renderBlacklist() {
+    try {
+        blacklistData = await window.electronAPI.listBlacklist();
+        const badge = document.getElementById('blacklist-count-badge');
+        if (badge) badge.textContent = blacklistData.length;
+
+        const container = document.getElementById('blacklist-list');
+        if (!blacklistData || blacklistData.length === 0) {
+            container.innerHTML = '<div class="empty-state">Nenhuma proxy na blacklist.</div>';
+            return;
+        }
+
+        container.innerHTML = blacklistData.map(p => `
+            <div class="blacklist-item">
+                <div class="blacklist-info">
+                    <div class="blacklist-addr">${p.protocol}://${p.ip}:${p.port}</div>
+                    <div class="blacklist-reason">Motivo: ${p.reason} · ${p.date}</div>
+                </div>
+                <button class="btn-unblacklist" data-proxy='${JSON.stringify({ protocol: p.protocol, ip: p.ip, port: p.port }).replace(/'/g, "&#39;")}'>✅ Remover</button>
+            </div>
+        `).join('');
+
+        document.querySelectorAll('.btn-unblacklist').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const proxy = JSON.parse(btn.dataset.proxy);
+                try {
+                    btn.textContent = '⏳';
+                    await window.electronAPI.unblacklistProxy(proxy);
+                    btn.textContent = '✅ Remover';
+                    await renderBlacklist();
+                } catch (e) {
+                    btn.textContent = '❌';
+                    setTimeout(() => btn.textContent = '✅ Remover', 2000);
+                }
+            });
+        });
+    } catch (e) { console.error('Blacklist render error:', e); }
+}
+
+// Proxy tabs
+document.querySelectorAll('.proxy-tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.proxy-tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.proxy-tab-content').forEach(t => t.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('proxy-tab-' + btn.dataset.proxyTab).classList.add('active');
+        if (btn.dataset.proxyTab === 'blacklist') renderBlacklist();
+    });
+});
+
+document.getElementById('btn-clear-blacklist')?.addEventListener('click', async () => {
+    if (!confirm('Remover TODAS as proxies da blacklist? Isso dá segunda chance a todas.')) return;
+    try {
+        for (const p of blacklistData) {
+            await window.electronAPI.unblacklistProxy({ protocol: p.protocol, ip: p.ip, port: p.port });
+        }
+        await renderBlacklist();
+    } catch (e) { console.error(e); }
+});
+
+window.electronAPI.onBlacklistUpdated(() => {
+    renderBlacklist();
+});
+
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    toast.style.cssText = `
+        position: fixed; bottom: 24px; right: 24px; z-index: 99999;
+        padding: 12px 20px; border-radius: 10px; font-size: 13px; font-weight: 600;
+        color: #fff; box-shadow: 0 4px 20px rgba(0,0,0,0.4); animation: toast-in 0.3s ease;
+        ${type === 'error' ? 'background: #dc2626; border: 1px solid #ef4444;' : 'background: #22c55e; border: 1px solid #4ade80;'}
+    `;
+    document.body.appendChild(toast);
+    setTimeout(() => {
+        toast.style.animation = 'toast-out 0.3s ease forwards';
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
 // ============ INIT ============
 (async () => {
     try {
@@ -754,16 +872,17 @@ window.electronAPI.onTopPoolUpdated((topPool) => {
         const proxies = await window.electronAPI.listProxies();
         window.lastProxyList = proxies;
         renderProxies(proxies, topPoolData, proxyStrikes);
+        await renderBlacklist();  // <<<< ADICIONE ESTA LINHA
         await renderAnalytics();
         await renderProfiles();
     } catch (e) { console.error('Init error:', e); }
 })();
 
 setInterval(async () => {
-    try { 
-        const proxies = await window.electronAPI.listProxies(); 
+    try {
+        const proxies = await window.electronAPI.listProxies();
         window.lastProxyList = proxies;
-        renderProxies(proxies, topPoolData, proxyStrikes); 
+        renderProxies(proxies, topPoolData, proxyStrikes);
     }
     catch (e) { }
 }, 10000);

@@ -12,6 +12,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     testProxyTrace: (proxy) => ipcRenderer.invoke('proxy:test-trace', proxy),
     healthCheckProxies: () => ipcRenderer.invoke('proxy:health-check'),
     
+    // >>> BLACKLIST <<<
+    blacklistProxy: (proxy) => ipcRenderer.invoke('proxy:blacklist', proxy),
+    unblacklistProxy: (proxy) => ipcRenderer.invoke('proxy:unblacklist', proxy),
+    listBlacklist: () => ipcRenderer.invoke('proxy:blacklist-list'),
+    
     // Config
     saveConfig: (config) => ipcRenderer.invoke('config:save', config),
     loadConfig: () => ipcRenderer.invoke('config:load'),
@@ -40,5 +45,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onStatusUpdate: (callback) => ipcRenderer.on('farm:status-update', (_, data) => callback(data)),
     onConfigLoaded: (callback) => ipcRenderer.on('config-loaded', (_, data) => callback(data)),
     onProxyUpdated: (callback) => ipcRenderer.on('proxy:updated', (_, data) => callback(data)),
+    onBlacklistUpdated: (callback) => ipcRenderer.on('proxy:blacklist-updated', (_, data) => callback(data)),
     removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel)
 });

@@ -11,6 +11,24 @@ const SUPPORTED_ROOTS = [
     'forumdinheiro.com', 'milbviral.com', 'tarviral.com', 'gsmods.com'
 ];
 
+const PROXY_INJECTION_KEYWORDS = [
+    'access denied', 'blocked', 'banned', 'forbidden',
+    'captcha', 'recaptcha', 'hcaptcha', 'turnstile',
+    'proxy detected', 'proxy ban', 'vpn detected',
+    'suspicious activity', 'automated access', 'bot detected',
+    'checking your browser', 'ddos protection',
+    'cloudflare', 'incapsula', 'sucuri',
+    'rate limit', 'too many requests', '429',
+    'security check', 'verification required',
+    'your ip has been blocked', 'ip blocked',
+    'this proxy is', 'free proxy', 'public proxy',
+    'advertisement', 'sponsored', 'ad served by',
+    'click here to continue', 'redirecting',
+    'warning', 'alert', 'notice', 'attention required',
+    'please enable javascript', 'javascript required',
+    'you are being redirected', 'wait a moment'
+];
+
 function isSupportedHost(url) {
     try {
         const u = new URL(url);
@@ -202,7 +220,7 @@ class FarmEngine {
                 session: sess, nodeIntegration: false, contextIsolation: true,
                 sandbox: true, allowRunningInsecureContent: false, webSecurity: true
             },
-            title: `${ proxy ? proxy.url : 'Sem proxy⚠️' } : Farm #${id + 1}`, backgroundColor: '#0c0c14'
+            title: `${proxy ? proxy.url : 'Sem proxy⚠️'} : Farm #${id + 1}`, backgroundColor: '#0c0c14'
         });
 
         win.webContents.setWindowOpenHandler(({ url }) => {
@@ -261,27 +279,21 @@ class FarmEngine {
         return `${g.flag} ${parts.join(', ')} (${g.countryCode})`;
     }
 
-    // ============================================================
-    // FAST-FAIL: detecta proxy ruim e aborta IMEDIATAMENTE
-    // ============================================================
     _handleProxyFailure(id, inst, reason) {
-        if (inst._proxyFailed) return; // já está tratando
+        if (inst._proxyFailed) return;
         inst._proxyFailed = true;
 
         if (inst.proxy) {
             this.log(id, 'warn', `🔄 Proxy ruim detectado (${reason}) — adicionando strike e trocando...`);
-            this.proxyManager.addStrike(inst.proxy);
+            this.proxyManager.addStrike(inst.proxy, reason);
         }
 
-        // Aborta tudo imediatamente
         if (inst.pollId) { clearTimeout(inst.pollId); inst.pollId = null; }
         if (inst.timeoutId) { clearTimeout(inst.timeoutId); inst.timeoutId = null; }
         inst.resolved = true;
 
-        // Limpa sessão
-        try { inst.session.clearStorageData(); } catch (e) {}
+        try { inst.session.clearStorageData(); } catch (e) { }
 
-        // Retry com nova proxy em 2s
         inst.timeoutId = setTimeout(() => {
             if (this.running && !inst.window.isDestroyed()) {
                 this._runCycle(id, { ...this.configStore.getAll(), links: this.configStore.get('links', []) }, inst.window, inst.session, null, true);
@@ -289,7 +301,6 @@ class FarmEngine {
         }, 2000);
     }
 
-    // Verifica se a proxy está congelando (demorando demais)
     _checkProxyStalled(inst, maxMs, label) {
         const elapsed = Date.now() - inst._lastActionTime;
         if (elapsed > maxMs) {
@@ -297,6 +308,81 @@ class FarmEngine {
             return true;
         }
         return false;
+    }
+
+    async _detectProxyInjection(win) {
+        try {
+            const result = await win.webContents.executeJavaScript(`
+                (function(){
+                    function getAllText() {
+                        // Tenta várias fontes porque proxy pode quebrar o body
+                        const bodyText = document.body ? (document.body.innerText || document.body.textContent || '') : '';
+                        const htmlText = document.documentElement ? (document.documentElement.innerText || document.documentElement.textContent || '') : '';
+                        const preText = document.querySelector('pre') ? (document.querySelector('pre').innerText || '') : '';
+                        // Pega o HTML cru também (algumas proxies mandam texto puro)
+                        const raw = document.documentElement ? document.documentElement.outerHTML.substring(0, 3000) : '';
+                        return { body: bodyText, html: htmlText, pre: preText, raw: raw, url: location.href };
+                    }
+                    return getAllText();
+                })()
+            `);
+
+            if (!result) return { injected: false };
+
+            const combined = (result.body + ' ' + result.html + ' ' + result.pre + ' ' + result.raw).toLowerCase();
+            const bodyLen = (result.body || '').length;
+            const htmlLen = (result.html || '').length;
+
+            // >>> DETECÇÃO 1: Página muito curta = proxy ruim ou debug <<<
+            if (bodyLen < 100 && htmlLen < 150) {
+                return { injected: true, reason: 'page_too_short', snippet: result.html.substring(0, 80) };
+            }
+
+            // >>> DETECÇÃO 2: Texto puro de debug (REMOTE_ADDR, HTTP_HOST, etc.) <<<
+            const debugMarkers = ['REMOTE_ADDR', 'REMOTE_PORT', 'REQUEST_METHOD', 'REQUEST_URI', 'REQUEST_TIME', 'HTTP_HOST', 'HTTP_USER_AGENT', 'HTTP_ACCEPT', 'HTTP_REFERER', 'HTTP_CONNECTION'];
+            for (const marker of debugMarkers) {
+                if (combined.includes(marker.toLowerCase())) {
+                    return { injected: true, reason: `proxy_debug_echo: ${marker}`, snippet: result.html.substring(0, 100) };
+                }
+            }
+
+            // >>> DETECÇÃO 3: Keywords de bloqueio/injeção <<<
+            const keywords = [
+                'access denied', 'blocked', 'banned', 'forbidden',
+                'captcha', 'recaptcha', 'hcaptcha', 'turnstile',
+                'proxy detected', 'proxy ban', 'vpn detected',
+                'suspicious activity', 'automated access', 'bot detected',
+                'checking your browser', 'ddos protection',
+                'cloudflare', 'incapsula', 'sucuri',
+                'rate limit', 'too many requests', '429',
+                'security check', 'verification required',
+                'your ip has been blocked', 'ip blocked',
+                'this proxy is', 'free proxy', 'public proxy',
+                'advertisement', 'sponsored', 'ad served by',
+                'click here to continue', 'redirecting',
+                'warning', 'alert', 'notice', 'attention required',
+                'please enable javascript', 'javascript required',
+                'you are being redirected', 'wait a moment',
+                'sessao invalida', 'sessão inválida', 'session invalid',
+                'invalid session', 'sessao expirada', 'sessão expirada',
+                'session expired', 'link expirado', 'link invalido', 'link inválido'
+            ];
+            for (const keyword of keywords) {
+                if (combined.includes(keyword)) {
+                    return { injected: true, reason: `keyword: ${keyword}`, snippet: result.html.substring(0, 100) };
+                }
+            }
+
+            // >>> DETECÇÃO 4: URL mudou para algo suspeito <<<
+            const url = result.url || '';
+            if (url.includes('captcha') || url.includes('challenge') || url.includes('blocked')) {
+                return { injected: true, reason: 'suspicious_url', snippet: url };
+            }
+
+            return { injected: false };
+        } catch (e) {
+            return { injected: false };
+        }
     }
 
     async _injectBypass(win) {
@@ -313,7 +399,7 @@ class FarmEngine {
             const result = await win.webContents.executeJavaScript(`
                 (function(){
                     const bodyText = document.body ? document.body.innerText : '';
-                    const match = bodyText.match(/(\d+)\s*[\/\-]\s*(\d+)/);
+                    const match = bodyText.match(/(\\d+)\\s*[\\/\\-]\\s*(\\d+)/);
                     if (match) {
                         return { current: parseInt(match[1], 10), total: parseInt(match[2], 10), text: match[0] };
                     }
@@ -321,7 +407,7 @@ class FarmEngine {
                     for (let i = 0; i < Math.min(allElements.length, 200); i++) {
                         const el = allElements[i];
                         const text = el.innerText || el.textContent || '';
-                        const m = text.match(/(\d+)\s*[\/\-]\s*(\d+)/);
+                        const m = text.match(/(\\d+)\\s*[\\/\\-]\\s*(\\d+)/);
                         if (m) {
                             const style = window.getComputedStyle(el);
                             const isProminent = parseFloat(style.fontSize) >= 14 || 
@@ -344,23 +430,23 @@ class FarmEngine {
         try {
             await win.webContents.executeJavaScript(`
                 (function(){
-                    const id = 'gs-click-marker';
-                    let el = document.getElementById(id);
-                    if (el) el.remove();
-                    el = document.createElement('div');
+                    if (!document.body && !document.documentElement) return;
+                    const id = 'gs-click-marker-' + Date.now();
+                    const el = document.createElement('div');
                     el.id = id;
-                    el.style.cssText = 'position:fixed;left:${x}px;top:${y}px;width:20px;height:20px;margin-left:-10px;margin-top:-10px;border-radius:50%;background:rgba(239,68,68,0.8);border:2px solid #fff;box-shadow:0 0 10px rgba(239,68,68,0.8);z-index:99999999999999999;pointer-events:none;animation:gs-pulse 0.6s ease-in-out 3;';
+                    el.style.cssText = 'position:fixed;left:${x}px;top:${y}px;width:24px;height:24px;margin-left:-12px;margin-top:-12px;border-radius:50%;background:rgba(239,68,68,0.9);border:3px solid #fff;box-shadow:0 0 15px rgba(239,68,68,1);z-index:2147483647;pointer-events:none;animation:gs-pulse-marker 0.5s ease-in-out infinite alternate;';
+                    const parent = document.body || document.documentElement;
+                    parent.appendChild(el);
                     const style = document.createElement('style');
-                    style.textContent = '@keyframes gs-pulse{0%{transform:scale(1);opacity:1;}50%{transform:scale(1.6);opacity:0.5;}100%{transform:scale(1);opacity:1;}}';
-                    if (!document.getElementById('gs-pulse-style')) {
-                        style.id = 'gs-pulse-style';
-                        document.head.appendChild(style);
-                    }
-                    document.body.appendChild(el);
-                    setTimeout(() => { const e = document.getElementById(id); if(e) e.remove(); }, 2500);
+                    style.textContent = '@keyframes gs-pulse-marker{from{transform:scale(1);opacity:1;}to{transform:scale(1.6);opacity:0.6;}}';
+                    document.head.appendChild(style);
+                    setTimeout(() => { 
+                        const e = document.getElementById('${id}'); 
+                        if(e) e.remove(); 
+                    }, 2500);
                 })()
             `);
-        } catch (e) {}
+        } catch (e) { }
     }
 
     async _nativeClick(win, coords) {
@@ -368,10 +454,8 @@ class FarmEngine {
         const { x, y } = coords;
 
         try {
-            if (!win.isFocused()) {
-                win.focus();
-                await this._sleep(100);
-            }
+            // >>> REMOVIDO: win.focus() quebra em headless <<<
+            // if (!win.isFocused()) { win.focus(); await this._sleep(100); }
 
             await wc.executeJavaScript(`
                 (function(){
@@ -399,7 +483,33 @@ class FarmEngine {
 
             this.log(null, 'info', `🎯 NATIVE CLICK em (${targetX}, ${targetY}) [scroll: ${adjusted.sx},${adjusted.sy}] — ${coords.label || 'coord'}`);
 
-            await this._showClickVisual(win, targetX, targetY);
+            // >>> VISUAL DO CLIQUE (funciona mesmo sem body visível) <<<
+            try {
+                await wc.executeJavaScript(`
+                    (function(){
+                        const id = 'gs-click-marker-' + Date.now();
+                        const el = document.createElement('div');
+                        el.id = id;
+                        el.style.cssText = 'position:fixed;left:${targetX}px;top:${targetY}px;width:24px;height:24px;margin-left:-12px;margin-top:-12px;border-radius:50%;background:rgba(239,68,68,0.9);border:3px solid #fff;box-shadow:0 0 15px rgba(239,68,68,1);z-index:2147483647;pointer-events:none;';
+                        document.body ? document.body.appendChild(el) : document.documentElement.appendChild(el);
+                        let s = 1, growing = true;
+                        const anim = setInterval(() => {
+                            s = growing ? s + 0.15 : s - 0.15;
+                            if (s >= 1.8) growing = false;
+                            if (s <= 0.8) growing = true;
+                            const e = document.getElementById('${id}');
+                            if (e) e.style.transform = 'scale(' + s + ')';
+                        }, 80);
+                        setTimeout(() => {
+                            clearInterval(anim);
+                            const e = document.getElementById('${id}');
+                            if (e) e.remove();
+                        }, 2000);
+                    })()
+                `);
+            } catch (e) {
+                // visual é opcional, não quebra o clique
+            }
 
             const steps = 5;
             const startX = targetX + randomInt(-80, 80);
@@ -435,7 +545,6 @@ class FarmEngine {
         for (let i = 0; i < coordsList.length; i++) {
             if (inst.resolved) return false;
 
-            // FAST-FAIL: se a proxy está congelada, aborta
             if (this._checkProxyStalled(inst, 20000, 'Esperando coordenada')) {
                 this._handleProxyFailure(inst.id, inst, 'click_stall');
                 return false;
@@ -483,7 +592,7 @@ class FarmEngine {
             const coords = await win.webContents.executeJavaScript(`
                 (function(){
                     const coords = [];
-                    const w = window.innerWidth;
+n                    const w = window.innerWidth;
                     const h = window.innerHeight;
                     const scrollX = window.scrollX;
                     const scrollY = window.scrollY;
@@ -528,7 +637,7 @@ class FarmEngine {
                     }
 
                     const adSelectors = [
-                        '.ad-container', '[class*="ad"]', '[id*="ad"]',
+                        '.ad-container', '[class*=\"ad\"]', '[id*=\"ad\"]',
                         '.adsbygoogle', '.advertisement', '.banner',
                         '[data-ad-slot]', '[data-ad-client]'
                     ];
@@ -624,7 +733,7 @@ class FarmEngine {
                     if (currentHost === finalHost || currentHost.endsWith('.' + finalHost) || finalHost.endsWith('.' + currentHost)) {
                         return true;
                     }
-                } catch (e) {}
+                } catch (e) { }
             }
 
             if (!isSupportedHost(currentUrl)) {
@@ -688,7 +797,6 @@ class FarmEngine {
             await this._sleep(bt);
         }
 
-        // Troca proxy se necessário
         if (isRetry || inst._proxyFailed || !currentProxy) {
             if (config.useProxies !== false) {
                 const np = this.proxyManager.pickWeighted();
@@ -730,15 +838,19 @@ class FarmEngine {
         if (!this.running || win.isDestroyed()) return;
 
         // ============================================================
-        // NAVEGACAO COM FAST-FAIL: se demorar mais de 15s, proxy ruim
+        // NAVEGACAO COM TIMEOUT CANCELAVEL (8s)
         // ============================================================
         let navFail = false;
         let navError = null;
         const navStart = Date.now();
+        const NAV_TIMEOUT_MS = 8000;
 
         const navPromise = win.loadURL(link, { userAgent: inst.fingerprint.userAgent });
         const navTimeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('NAV_TIMEOUT')), 15000);
+            setTimeout(() => {
+                try { win.webContents.stop(); } catch (e) { }
+                reject(new Error('NAV_TIMEOUT'));
+            }, NAV_TIMEOUT_MS);
         });
 
         try {
@@ -749,9 +861,8 @@ class FarmEngine {
             this.log(id, 'error', `Navegacao: ${e.message}`);
         }
 
-        // Se demorou demais mas não deu erro explícito, ainda pode ser proxy ruim
         const navElapsed = Date.now() - navStart;
-        if (!navFail && navElapsed > 12000) {
+        if (!navFail && navElapsed > 6000) {
             this.log(id, 'warn', `⏱ Navegacao demorou ${navElapsed}ms — possivel proxy lenta`);
         }
 
@@ -765,7 +876,7 @@ class FarmEngine {
         )) {
             this.log(id, 'warn', `🔄 Erro de proxy detectado — trocando e tentando novamente...`);
             inst._proxyFailed = true;
-            if (currentProxy) this.proxyManager.addStrike(currentProxy);
+            if (currentProxy) this.proxyManager.addStrike(currentProxy, 'nav_proxy_error');
             this.stats.failCount++;
             this._recordFail(link);
             inst.timeoutId = setTimeout(() => {
@@ -785,6 +896,27 @@ class FarmEngine {
         }
 
         inst._lastActionTime = Date.now();
+
+        // ============================================================
+        // DETECÇÃO DE INJEÇÃO / DEBUG / PÁGINA VAZIA
+        // ============================================================
+        await this._sleep(500); // dá um tempo pro DOM renderizar
+        const injectionCheck = await this._detectProxyInjection(win);
+        if (injectionCheck.injected) {
+            this.log(id, 'error', `🚨 PROXY RUIM! ${injectionCheck.reason} — Blacklistando...`);
+            if (currentProxy) {
+                this.proxyManager.blacklistProxy(currentProxy, `auto: ${injectionCheck.reason}`);
+                this.proxyManager.addStrike(currentProxy, 'injection_detected');
+            }
+            this.stats.failCount++;
+            this._recordFail(link);
+            inst._proxyFailed = true;
+            inst.timeoutId = setTimeout(() => {
+                if (this.running && !win.isDestroyed()) this._runCycle(id, config, win, sess, null, true);
+            }, 2000);
+            return;
+        }
+
         await this._injectBypass(win);
 
         const startTime = Date.now();
@@ -793,7 +925,6 @@ class FarmEngine {
         const doPoll = async () => {
             if (inst.resolved || !this.running || win.isDestroyed()) return;
 
-            // FAST-FAIL: se o poll inteiro está congelado por mais de 20s
             if (this._checkProxyStalled(inst, 20000, 'Poll congelado')) {
                 this._handleProxyFailure(id, inst, 'poll_stall');
                 return;
@@ -834,7 +965,6 @@ class FarmEngine {
                 return;
             }
 
-            // TENTA CLICAR NO ANUNCIO
             if (inst.adClickAttempts < inst.maxAdClickAttempts && !inst.resolved) {
                 inst.adClickAttempts++;
                 inst._lastActionTime = Date.now();
@@ -880,13 +1010,12 @@ class FarmEngine {
                 }
             }
 
-            // TIMEOUT normal (só chega aqui se não deu fast-fail)
             if (Date.now() - startTime > TIMEOUT_MS) {
                 if (inst.resolved) return;
                 inst.resolved = true;
                 if (inst.pollId) { clearTimeout(inst.pollId); inst.pollId = null; }
                 if (inst.timeoutId) { clearTimeout(inst.timeoutId); inst.timeoutId = null; }
-                this.log(id, 'error', `⏱ Timeout ${TIMEOUT_MS/1000}s. URL final nao alcancada.`);
+                this.log(id, 'error', `⏱ Timeout ${TIMEOUT_MS / 1000}s. URL final nao alcancada.`);
                 this.stats.failCount++;
                 this._recordFail(link);
                 inst.phase = null; inst.finalUrl = null; this._broadcastStatus();
@@ -942,7 +1071,7 @@ class FarmEngine {
             running: this.running,
             instances: Array.from(this.instances.entries()).map(([id, inst]) => ({
                 id, status: inst.status, cycle: inst.cycle,
-                currentLink: inst.currentLink || null, 
+                currentLink: inst.currentLink || null,
                 phase: inst.phase,
                 proxy: inst.proxy ? this._formatLocation(inst.proxy) : 'Sem proxy ⚠',
                 proxyUrl: inst.proxy ? inst.proxy.url : null,

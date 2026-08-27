@@ -61,20 +61,26 @@ function createTray() {
     const contextMenu = Menu.buildFromTemplate([
         { label: 'Abrir Dashboard', click: () => { if (mainWindow) mainWindow.show(); } },
         { type: 'separator' },
-        { label: 'Iniciar Farm', click: async () => {
-            if (mainWindow) {
-                const cfg = configStore.getAll();
-                await farmEngine.start(cfg);
+        {
+            label: 'Iniciar Farm', click: async () => {
+                if (mainWindow) {
+                    const cfg = configStore.getAll();
+                    await farmEngine.start(cfg);
+                }
             }
-        }},
-        { label: 'Parar Farm', click: async () => {
-            if (farmEngine) await farmEngine.stopAll();
-        }},
+        },
+        {
+            label: 'Parar Farm', click: async () => {
+                if (farmEngine) await farmEngine.stopAll();
+            }
+        },
         { type: 'separator' },
-        { label: 'Sair', click: () => {
-            if (farmEngine) farmEngine.stopAll();
-            app.quit();
-        }}
+        {
+            label: 'Sair', click: () => {
+                if (farmEngine) farmEngine.stopAll();
+                app.quit();
+            }
+        }
     ]);
     tray.setContextMenu(contextMenu);
 
@@ -94,9 +100,9 @@ app.whenReady().then(() => {
 
     // ===== FARM =====
     ipcMain.handle('farm:start', async (event, cfg) => {
-        try { 
-            configStore.merge(cfg); 
-            return await farmEngine.start(cfg); 
+        try {
+            configStore.merge(cfg);
+            return await farmEngine.start(cfg);
         }
         catch (e) { return { ok: false, error: e.message }; }
     });
@@ -133,6 +139,20 @@ app.whenReady().then(() => {
     });
     ipcMain.handle('proxy:health-check', async () => {
         return proxyManager.healthCheckAll();
+    });
+
+    // >>> HANDLERS DE BLACKLIST <<<
+    ipcMain.handle('proxy:blacklist', async (event, proxy) => {
+        try { return proxyManager.blacklistProxy(proxy, 'manual'); }
+        catch (e) { return false; }
+    });
+    ipcMain.handle('proxy:unblacklist', async (event, proxy) => {
+        try { return proxyManager.unblacklistProxy(proxy); }
+        catch (e) { return false; }
+    });
+    ipcMain.handle('proxy:blacklist-list', async () => {
+        try { return proxyManager.getBlacklist(); }
+        catch (e) { return []; }
     });
 
     // ===== CONFIG =====

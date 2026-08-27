@@ -118,7 +118,7 @@
                 </div>
             </section>
 
-            <!-- ===== PROXIES ===== -->
+                        <!-- ===== PROXIES ===== -->
             <section class="tab" id="tab-proxies">
                 <header class="page-header">
                     <h2>🌐 Gerenciador de Proxies</h2>
@@ -127,9 +127,27 @@
                         <button class="btn btn-primary" id="btn-refresh-proxies">🔄 Atualizar & Testar</button>
                     </div>
                 </header>
-                <div class="proxy-stats" id="proxy-stats">0 proxies carregados</div>
-                <div class="proxy-list" id="proxy-list">
-                    <div class="empty-state">Clique em "Atualizar & Testar" para buscar proxies.</div>
+                
+                <div class="proxy-tabs">
+                    <button class="proxy-tab-btn active" data-proxy-tab="pool">🏊 Pool Ativo</button>
+                    <button class="proxy-tab-btn" data-proxy-tab="blacklist">⛔ Blacklist <span id="blacklist-count-badge" class="badge">0</span></button>
+                </div>
+                
+                <div class="proxy-tab-content active" id="proxy-tab-pool">
+                    <div class="proxy-stats" id="proxy-stats">0 proxies carregados</div>
+                    <div class="proxy-list" id="proxy-list">
+                        <div class="empty-state">Clique em "Atualizar & Testar" para buscar proxies.</div>
+                    </div>
+                </div>
+                
+                <div class="proxy-tab-content" id="proxy-tab-blacklist">
+                    <div class="blacklist-header">
+                        <span>Proxies permanentemente banidas. Elas nunca mais serão usadas.</span>
+                        <button class="btn btn-sm btn-danger" id="btn-clear-blacklist">🗑 Limpar Toda Blacklist</button>
+                    </div>
+                    <div class="blacklist-list" id="blacklist-list">
+                        <div class="empty-state">Nenhuma proxy na blacklist.</div>
+                    </div>
                 </div>
             </section>
 
